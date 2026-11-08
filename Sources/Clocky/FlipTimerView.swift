@@ -246,7 +246,7 @@ struct FlipTimerView: View {
             }
             .frame(width: 18)
             Button { timer.removeTimer(item.id) } label: { Image(systemName: "xmark") }
-                .help(L("삭제"))
+                .help(L("삭제 (⌘Z로 되돌리기)"))
                 .disabled(timer.timers.count <= 1)
                 .frame(width: 18)
         }
@@ -276,7 +276,7 @@ struct FlipTimerView: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
             Button { timer.removeAlarm(item.id) } label: { Image(systemName: "xmark") }
-                .help(L("삭제"))
+                .help(L("삭제 (⌘Z로 되돌리기)"))
                 .frame(width: 18)
         }
     }

@@ -10,11 +10,16 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
     private(set) lazy var panel: TimerPanel = makePanel()
     private var isLoaded = false
     private var pinSubscription: AnyCancellable?
+    /// 창 왼쪽 아래 모서리. 닫았다 열어도, 앱을 다시 켜도 옮겨 둔 자리에 뜬다.
+    private static let originKey = "windowOrigin"
+    /// 지운 타이머·알람을 ⌘Z로 되살린다.
+    private let undoManager = UndoManager()
 
     init(settings: ClockySettings) {
         self.settings = settings
         super.init()
         timer.onRing = { [weak self] in self?.show() }
+        timer.undoManager = undoManager
         // 타이머를 띄워 둔 모니터를 빼면 남은 화면으로 옮긴다.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -27,7 +32,7 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
     func setFrame(_ frame: NSRect) { panel.setFrame(frame, display: false) }
 
     func show() {
-        if !panel.isVisible { panel.setFrameOrigin(defaultOrigin()) }
+        if !panel.isVisible { panel.setFrameOrigin(savedOrigin() ?? defaultOrigin()) }
         panel.orderFrontRegardless()
         panel.makeKey()
         timer.isDisplayed = true
@@ -40,15 +45,35 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
         timer.isDisplayed = false
     }
 
+    func windowDidMove(_ notification: Notification) {
+        let origin = panel.frame.origin
+        UserDefaults.standard.set([Double(origin.x), Double(origin.y)], forKey: Self.originKey)
+    }
+
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        undoManager
+    }
+
     /// 창의 윗부분이 어느 화면에도 충분히 걸쳐 있지 않으면 기본 자리로 옮긴다.
     func ensureOnScreen() {
         guard isVisible else { return }
-        let top = NSRect(x: panel.frame.minX, y: panel.frame.maxY - 30, width: panel.frame.width, height: 30)
-        let reachable = NSScreen.screens.contains { screen in
+        if !Self.isReachable(panel.frame) { panel.setFrameOrigin(defaultOrigin()) }
+    }
+
+    /// 제목 표시줄 자리를 잡고 끌 수 있을 만큼 화면에 걸쳐 있는지.
+    private static func isReachable(_ frame: NSRect) -> Bool {
+        let top = NSRect(x: frame.minX, y: frame.maxY - 30, width: frame.width, height: 30)
+        return NSScreen.screens.contains { screen in
             let visible = screen.visibleFrame.intersection(top)
             return visible.width >= 60 && visible.height >= 15
         }
-        if !reachable { panel.setFrameOrigin(defaultOrigin()) }
+    }
+
+    /// 저장해 둔 자리. 그 모니터를 뺐으면 쓰지 않는다.
+    private func savedOrigin() -> NSPoint? {
+        guard let values = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], values.count == 2 else { return nil }
+        let origin = NSPoint(x: values[0], y: values[1])
+        return Self.isReachable(NSRect(origin: origin, size: panel.frame.size)) ? origin : nil
     }
 
     private func makePanel() -> TimerPanel {

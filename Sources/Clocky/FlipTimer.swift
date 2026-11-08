@@ -87,8 +87,10 @@ final class FlipTimer: ObservableObject {
     static let maxDuration = 100 * 3600 - 1
     /// 잠자기 등으로 늦게 확인했을 때 이 안이면 늦게라도 울린다.
     private static let lateLimit: TimeInterval = 3600
-    private static let rings = 3
+    /// 0.6초 간격으로 세 번 울리고 두 박자 쉰다. 끌 때까지 되풀이하되 1분이 지나면 소리만 멈춘다.
     private static let ringInterval: TimeInterval = 0.6
+    private static let ringPattern = [true, true, true, false, false]
+    private static let soundLimit: TimeInterval = 60
 
     private enum Keys {
         static let mode = "timerMode", pinned = "timerPinned", timers = "timers", alarms = "alarms"
@@ -97,7 +99,15 @@ final class FlipTimer: ObservableObject {
         static let alarmName = "alarmName", alarmMinutes = "alarmMinutes"
         static let alarmEnabled = "alarmEnabled", alarmRepeats = "alarmRepeats"
     }
-    private struct SavedTimer: Codable { var id: UUID; var name: String; var duration: Int }
+    /// 도는·멈춘 상태도 저장해 앱을 다시 켜도 이어 간다. 예전에 저장한 값에는 뒤의 셋이 없다.
+    private struct SavedTimer: Codable {
+        var id: UUID
+        var name: String
+        var duration: Int
+        var phase: String?
+        var endDate: Date?
+        var pausedRemaining: Int?
+    }
     private struct SavedAlarm: Codable { var id: UUID; var name: String; var minutes: Int; var enabled: Bool; var repeats: Bool }
     private let defaults = UserDefaults.standard
 
@@ -109,7 +119,11 @@ final class FlipTimer: ObservableObject {
     var isDisplayed = false { didSet { updateTicker() } }
     /// 울리기 시작하면 불린다. 창을 앞으로 가져오는 데 쓴다.
     var onRing: (() -> Void)?
+    /// 지운 항목을 되살리는 데 쓴다. 창이 넘겨준다.
+    weak var undoManager: UndoManager?
     private var ticker: Timer?
+    private var soundTimer: Timer?
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     /// 적어도 하나는 있다.
     @Published private(set) var timers: [TimerItem] { didSet { saveTimers(); updateTicker() } }
@@ -128,7 +142,7 @@ final class FlipTimer: ObservableObject {
         var timers: [TimerItem]
         if let data = defaults.data(forKey: Keys.timers),
            let saved = try? JSONDecoder().decode([SavedTimer].self, from: data) {
-            timers = saved.map { TimerItem(id: $0.id, name: $0.name, duration: min(max($0.duration, 1), Self.maxDuration)) }
+            timers = saved.map { Self.restore($0, at: Date()) }
         } else {
             let duration = defaults.integer(forKey: Keys.duration)
             timers = [TimerItem(name: defaults.string(forKey: Keys.name) ?? "",
@@ -163,11 +177,73 @@ final class FlipTimer: ObservableObject {
                 defaults.removeObject(forKey: key)
             }
         }
+        observeClock()
         updateTicker()
     }
 
+    deinit {
+        for (center, observer) in observers { center.removeObserver(observer) }
+    }
+
+    /// 앱이 꺼진 동안 끝난 타이머는 1시간 안이면 켜자마자 울리고, 그보다 오래됐으면 처음 시간으로 둔다.
+    private static func restore(_ saved: SavedTimer, at now: Date) -> TimerItem {
+        var item = TimerItem(id: saved.id, name: saved.name, duration: min(max(saved.duration, 1), maxDuration))
+        switch saved.phase {
+        case "running":
+            if let end = saved.endDate, now.timeIntervalSince(end) < lateLimit {
+                item.phase = .running
+                item.endDate = end
+            }
+        case "paused":
+            if let left = saved.pausedRemaining, left > 0 {
+                item.phase = .paused
+                item.pausedRemaining = min(left, maxDuration)
+            }
+        default:
+            break
+        }
+        return item
+    }
+
+    /// 시간대·시계·날짜가 바뀌면 알람의 다음 시각을 다시 셈한다. 잠자기에서 깨면 바로 확인한다.
+    private func observeClock() {
+        let center = NotificationCenter.default
+        for name in [Notification.Name.NSSystemTimeZoneDidChange, .NSSystemClockDidChange, .NSCalendarDayChanged] {
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.clockDidChange()
+            }
+            observers.append((center, observer))
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        let observer = workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.tick()
+        }
+        observers.append((workspace, observer))
+    }
+
+    func clockDidChange() {
+        NSTimeZone.resetSystemTimeZone()
+        // 바뀌기 전에 이미 지난 알람은 먼저 울린다.
+        tick()
+        let date = Date()
+        let rescheduled = alarms.map { alarm -> AlarmItem in
+            var alarm = alarm
+            alarm.schedule(after: date)
+            return alarm
+        }
+        if rescheduled != alarms { alarms = rescheduled }
+    }
+
     private func saveTimers() {
-        let saved = timers.map { SavedTimer(id: $0.id, name: $0.name, duration: $0.duration) }
+        let saved = timers.map { item -> SavedTimer in
+            var saved = SavedTimer(id: item.id, name: item.name, duration: item.duration)
+            switch item.phase {
+            case .running: saved.phase = "running"; saved.endDate = item.endDate
+            case .paused: saved.phase = "paused"; saved.pausedRemaining = item.pausedRemaining
+            case .idle, .ringing: break
+            }
+            return saved
+        }
         if let data = try? JSONEncoder().encode(saved) { defaults.set(data, forKey: Keys.timers) }
     }
 
@@ -234,8 +310,20 @@ final class FlipTimer: ObservableObject {
     /// 마지막 하나는 지우지 않는다.
     func removeTimer(_ id: UUID) {
         guard timers.count > 1, let index = timers.firstIndex(where: { $0.id == id }) else { return }
-        timers.remove(at: index)
+        let item = timers.remove(at: index)
         if selectedTimerID == id { selectedTimerID = timers[min(index, timers.count - 1)].id }
+        undoManager?.registerUndo(withTarget: self) { $0.restoreTimer(item, at: index) }
+        undoManager?.setActionName(L("타이머 삭제"))
+    }
+
+    /// 지울 때의 상태 그대로 되살린다. 도는 타이머는 끝나는 시각이 그대로라 그동안 흐른 시간도 반영된다.
+    private func restoreTimer(_ item: TimerItem, at index: Int) {
+        guard !timers.contains(where: { $0.id == item.id }) else { return }
+        timers.insert(item, at: min(index, timers.count))
+        selectedTimerID = item.id
+        mode = .timer
+        undoManager?.registerUndo(withTarget: self) { $0.removeTimer(item.id) }
+        undoManager?.setActionName(L("타이머 삭제"))
     }
 
     func renameTimer(_ id: UUID, to name: String) {
@@ -299,9 +387,22 @@ final class FlipTimer: ObservableObject {
 
     func removeAlarm(_ id: UUID) {
         guard let index = alarms.firstIndex(where: { $0.id == id }) else { return }
-        alarms.remove(at: index)
+        let item = alarms.remove(at: index)
         ringingAlarmIDs.remove(id)
         if selectedAlarmID == id { selectedAlarmID = alarms.isEmpty ? nil : alarms[min(index, alarms.count - 1)].id }
+        undoManager?.registerUndo(withTarget: self) { $0.restoreAlarm(item, at: index) }
+        undoManager?.setActionName(L("알람 삭제"))
+    }
+
+    private func restoreAlarm(_ item: AlarmItem, at index: Int) {
+        guard !alarms.contains(where: { $0.id == item.id }) else { return }
+        var item = item
+        item.schedule(after: Date())
+        alarms.insert(item, at: min(index, alarms.count))
+        selectedAlarmID = item.id
+        mode = .alarm
+        undoManager?.registerUndo(withTarget: self) { $0.removeAlarm(item.id) }
+        undoManager?.setActionName(L("알람 삭제"))
     }
 
     func renameAlarm(_ id: UUID, to name: String) {
@@ -338,6 +439,7 @@ final class FlipTimer: ObservableObject {
             timers = timers.map { var t = $0; if t.phase == .ringing { t.phase = .idle }; return t }
         }
         ringingAlarmIDs = []
+        stopSound()
         now = Date()
         updateTicker()
     }
@@ -405,13 +507,32 @@ final class FlipTimer: ObservableObject {
         updateTicker()
     }
 
+    /// 새로 울릴 때마다 1분 제한을 다시 센다.
     private func ring() {
         onRing?()
-        for ring in 0..<Self.rings {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(ring) * Self.ringInterval) { [weak self] in
-                if self?.isRinging == true { AlarmSound.play() }
+        stopSound()
+        let started = Date()
+        var beat = 0
+        let timer = Timer(timeInterval: Self.ringInterval, repeats: true) { [weak self] _ in
+            guard let self, self.isRinging, Date().timeIntervalSince(started) < Self.soundLimit else {
+                self?.stopSound()
+                return
             }
+            if Self.ringPattern[beat % Self.ringPattern.count] { AlarmSound.play() }
+            beat += 1
         }
+        RunLoop.main.add(timer, forMode: .common)
+        soundTimer = timer
+        timer.fire()
+    }
+
+    /// 소리가 울리는 중인지. 시험에서 확인한다.
+    var isSounding: Bool { soundTimer != nil }
+
+    private func stopSound() {
+        soundTimer?.invalidate()
+        soundTimer = nil
+        AlarmSound.stop()
     }
 
     /// "90"은 90분, "5:00"은 5분, "1:30:00"은 1시간 30분.

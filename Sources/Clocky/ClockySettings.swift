@@ -85,6 +85,11 @@ enum AlarmSound {
         current = NSSound(named: name)
         current?.play()
     }
+
+    static func stop() {
+        current?.stop()
+        current = nil
+    }
 }
 
 enum Localization {
@@ -129,6 +134,9 @@ enum Localization {
         "알람 추가": "Add Alarm",
         "등록된 알람이 없습니다": "No alarms yet",
         "삭제": "Delete",
+        "삭제 (⌘Z로 되돌리기)": "Delete (⌘Z to undo)",
+        "타이머 삭제": "Delete Timer",
+        "알람 삭제": "Delete Alarm",
         "대기": "Ready",
         "진행 중": "Running",
         "일시정지됨": "Paused",
