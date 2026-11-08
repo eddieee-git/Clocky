@@ -6,9 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private(set) lazy var window = FlipTimerWindowController(settings: settings)
     private(set) var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
-    /// 메뉴를 열 때마다 바꾸는 타이머·알람 상태 줄.
-    private var timerStatusItem: NSMenuItem?
-    private var alarmStatusItem: NSMenuItem?
+    /// 메뉴를 열 때마다 새로 만드는 타이머·알람 상태 줄.
+    private var statusLineItems: [NSMenuItem] = []
     private var subscriptions: Set<AnyCancellable> = []
 
     private static let launchedKey = "hasLaunched"
@@ -22,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildStatusMenu()
 
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
-        window.timer.$now.combineLatest(window.timer.$phase)
+        window.timer.$now.combineLatest(window.timer.$timers)
             .sink { [weak self] _, _ in self?.updateStatusTitle() }
             .store(in: &subscriptions)
         NotificationCenter.default.addObserver(forName: Localization.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -43,17 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
+    /// 여러 타이머가 돌면 가장 먼저 끝나는 것을 보여 준다. 도는 것이 없으면 일시정지한 것 중에서 고른다.
     private func updateStatusTitle() {
         let timer = window.timer
-        let title: String
-        switch timer.phase {
-        case .running, .paused, .ringing:
-            let s = timer.remaining
-            title = s >= 3600 ? String(format: " %d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
-                              : String(format: " %d:%02d", s / 60, s % 60)
-        case .idle:
-            title = ""
-        }
+        let now = timer.now
+        let shown = timer.timers.filter { $0.phase == .ringing }.first
+            ?? timer.timers.filter { $0.phase == .running }.min { $0.remaining(at: now) < $1.remaining(at: now) }
+            ?? timer.timers.filter { $0.phase == .paused }.min { $0.remaining(at: now) < $1.remaining(at: now) }
+        let title = shown.map { " " + clockText($0.remaining(at: now)) } ?? ""
         guard let button = statusItem?.button, button.title != title else { return }
         button.title = title
         button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -64,10 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildStatusMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: L("Clocky 열기"), action: #selector(showWindow), keyEquivalent: "").target = self
-        timerStatusItem = menu.addItem(withTitle: "", action: #selector(showWindow), keyEquivalent: "")
-        timerStatusItem?.target = self
-        alarmStatusItem = menu.addItem(withTitle: "", action: #selector(showWindow), keyEquivalent: "")
-        alarmStatusItem?.target = self
+        statusLineItems = []
         menu.addItem(.separator())
 
         let languageMenu = NSMenu()
@@ -95,22 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === statusMenu {
-            let timer = window.timer
-            switch timer.phase {
-            case .running:
-                timerStatusItem?.title = L("타이머 %@ 남음", clockText(timer.remaining))
-            case .paused:
-                timerStatusItem?.title = L("타이머 일시정지 · %@", clockText(timer.remaining))
-            case .idle, .ringing:
-                timerStatusItem?.title = ""
-            }
-            timerStatusItem?.isHidden = timerStatusItem?.title.isEmpty ?? true
-            if let next = timer.nextAlarm {
-                alarmStatusItem?.title = L("알람 %@ · %@ 남음", settings.timeText(next), remainingText(until: next, from: Date()))
-                alarmStatusItem?.isHidden = false
-            } else {
-                alarmStatusItem?.isHidden = true
-            }
+            updateStatusLines(in: menu)
             menu.items.first { $0.action == #selector(toggleLaunchAtLogin) }?.state = settings.launchAtLogin ? .on : .off
             return
         }
@@ -123,12 +101,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func clockText(_ seconds: Int) -> String {
-        seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
-                        : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    /// "Clocky 열기" 바로 아래에 도는·멈춘 타이머와 켜 둔 알람을 한 줄씩 넣는다. 누르면 그 항목을 창에 띄운다.
+    private func updateStatusLines(in menu: NSMenu) {
+        statusLineItems.forEach(menu.removeItem)
+        statusLineItems = []
+        let timer = window.timer
+        let now = Date()
+        var lines: [(String, String)] = []
+        for item in timer.timers {
+            let name = timer.displayName(of: item)
+            switch item.phase {
+            case .running: lines.append((L("%@ · %@ 남음", name, clockText(item.remaining(at: now))), "timer:\(item.id)"))
+            case .paused: lines.append((L("%@ · 일시정지 %@", name, clockText(item.remaining(at: now))), "timer:\(item.id)"))
+            case .idle, .ringing: break
+            }
+        }
+        for item in timer.upcomingAlarms {
+            guard let next = item.next else { continue }
+            lines.append((L("%@ · %@ (%@ 남음)", timer.displayName(of: item), settings.timeText(next),
+                            remainingText(until: next, from: now)), "alarm:\(item.id)"))
+        }
+        for (index, line) in lines.enumerated() {
+            let item = NSMenuItem(title: line.0, action: #selector(showItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = line.1
+            menu.insertItem(item, at: 1 + index)
+            statusLineItems.append(item)
+        }
     }
 
     @objc private func showWindow() {
+        window.show()
+    }
+
+    @objc private func showItem(_ sender: NSMenuItem) {
+        let timer = window.timer
+        if let key = sender.representedObject as? String {
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let id = UUID(uuidString: parts[1]) {
+                if parts[0] == "timer", timer.timers.contains(where: { $0.id == id }) {
+                    timer.selectedTimerID = id
+                    timer.mode = .timer
+                } else if parts[0] == "alarm", timer.alarms.contains(where: { $0.id == id }) {
+                    timer.selectedAlarmID = id
+                    timer.mode = .alarm
+                }
+            }
+        }
         window.show()
     }
 
