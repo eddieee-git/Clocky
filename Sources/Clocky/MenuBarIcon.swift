@@ -18,4 +18,12 @@ enum MenuBarIcon {
         image.accessibilityDescription = "Clocky"
         return image
     }
+
+    /// 1시간 안에 울릴 알람이 있을 때 쓰는 알람 시계 모양.
+    static func alarm() -> NSImage {
+        let image = NSImage(systemSymbolName: "alarm", accessibilityDescription: "Clocky")?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)) ?? make()
+        image.isTemplate = true
+        return image
+    }
 }

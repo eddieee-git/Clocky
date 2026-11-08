@@ -1,21 +1,25 @@
 import AppKit
 import Combine
 
-/// 타이머 하나. 이름과 정해 둔 시간은 저장하고, 돌고 있는 상태는 앱을 끄면 사라진다.
+/// 타이머 하나. 이름, 정해 둔 시간, 도는·멈춘 상태를 저장한다.
 struct TimerItem: Identifiable, Equatable {
-    enum Phase { case idle, running, paused, ringing }
+    enum Phase: String { case idle, running, paused, ringing }
 
     let id: UUID
+    /// 비어 있으면 "타이머 3"처럼 번호로 부른다. 번호는 지금 고른 언어로 보여 준다.
     var name: String
+    /// 만들 때 붙인 번호. 다른 타이머를 지워도 바뀌지 않는다.
+    var number: Int
     /// 정해 둔 시간(초). 초기화하면 여기로 돌아간다.
     var duration: Int
     var phase = Phase.idle
     var endDate: Date?
     var pausedRemaining = 0
 
-    init(id: UUID = UUID(), name: String, duration: Int) {
+    init(id: UUID = UUID(), name: String = "", number: Int, duration: Int) {
         self.id = id
         self.name = name
+        self.number = number
         self.duration = duration
     }
 
@@ -34,27 +38,48 @@ struct TimerItem: Identifiable, Equatable {
     func isWarning(at now: Date) -> Bool {
         guard phase == .running else { return false }
         let left = remaining(at: now)
-        return left > 0 && left <= FlipTimer.warningSeconds
+        return left > 0 && left <= ClockStore.warningSeconds
     }
 }
 
-/// 알람 하나. 시와 분만 쓰고, 매일 반복하지 않으면 한 번 울린 뒤 스스로 꺼진다.
+/// 알람 하나. 시와 분, 울릴 요일을 정한다. 요일이 없으면 한 번 울린 뒤 스스로 꺼진다.
 struct AlarmItem: Identifiable, Equatable {
+    /// `Calendar`의 요일 번호. 1이 일요일, 7이 토요일이다.
+    static let everyDay: Set<Int> = Set(1...7)
+    static let weekdays: Set<Int> = [2, 3, 4, 5, 6]
+    static let weekend: Set<Int> = [1, 7]
+
     let id: UUID
     var name: String
+    var number: Int
     /// 자정부터 센 분.
     var minutes: Int
     var enabled: Bool
-    var repeats: Bool
-    /// 다음에 울릴 때. 꺼져 있으면 없다.
+    var days: Set<Int>
+    /// 정해 둔 다음 시각. 꺼져 있으면 없다.
     var next: Date?
+    /// "5분 뒤 다시"를 누른 뒤 한 번 더 울릴 때. 정해 둔 시각과 따로 센다.
+    var snoozeUntil: Date?
 
-    init(id: UUID = UUID(), name: String, minutes: Int, enabled: Bool = true, repeats: Bool = true) {
+    init(id: UUID = UUID(), name: String = "", number: Int, minutes: Int, enabled: Bool = true, days: Set<Int> = everyDay) {
         self.id = id
         self.name = name
+        self.number = number
         self.minutes = minutes
         self.enabled = enabled
-        self.repeats = repeats
+        self.days = days
+    }
+
+    var repeats: Bool { !days.isEmpty }
+
+    /// 다시 알림과 정해 둔 시각 중 먼저 오는 것.
+    var upcoming: Date? {
+        switch (next, snoozeUntil) {
+        case let (a?, b?): return min(a, b)
+        case let (a?, nil): return a
+        case let (nil, b?): return b
+        case (nil, nil): return nil
+        }
     }
 
     /// 오늘 날짜에 이 시각을 얹은 값. 시각 고르기 칸에 쓴다.
@@ -63,21 +88,30 @@ struct AlarmItem: Identifiable, Equatable {
     }
 
     func isWarning(at now: Date) -> Bool {
-        guard let next else { return false }
-        let left = next.timeIntervalSince(now)
-        return left > 0 && left <= TimeInterval(FlipTimer.warningSeconds)
+        guard let upcoming else { return false }
+        let left = upcoming.timeIntervalSince(now)
+        return left > 0 && left <= TimeInterval(ClockStore.warningSeconds)
     }
 
     mutating func schedule(after date: Date) {
         guard enabled else { next = nil; return }
-        next = Calendar.current.nextDate(after: date, matching: DateComponents(hour: minutes / 60, minute: minutes % 60, second: 0),
-                                         matchingPolicy: .nextTime)
+        let calendar = Calendar.current
+        let (hour, minute) = (minutes / 60, minutes % 60)
+        if days.isEmpty || days == Self.everyDay {
+            next = calendar.nextDate(after: date, matching: DateComponents(hour: hour, minute: minute, second: 0),
+                                     matchingPolicy: .nextTime)
+        } else {
+            next = days.compactMap {
+                calendar.nextDate(after: date, matching: DateComponents(hour: hour, minute: minute, second: 0, weekday: $0),
+                                  matchingPolicy: .nextTime)
+            }.min()
+        }
     }
 }
 
 /// 타이머 여러 개와 알람 여러 개를 함께 돌린다.
 /// 창에서 타이머·알람 중 무엇을 보여 줄지(`mode`)는 화면만 바꾸고, 도는 타이머에는 손대지 않는다.
-final class FlipTimer: ObservableObject {
+final class ClockStore: ObservableObject {
     enum Mode: String { case timer, alarm }
 
     static let presets = [1, 3, 5, 10, 25]
@@ -85,12 +119,17 @@ final class FlipTimer: ObservableObject {
     static let warningSeconds = 10
     static let defaultDuration = 5 * 60
     static let maxDuration = 100 * 3600 - 1
+    static let snoozeMinutes = 5
+    /// 메뉴바에 알람까지 남은 시간을 보여 주기 시작하는 때.
+    static let menuBarAlarmWindow: TimeInterval = 3600
     /// 잠자기 등으로 늦게 확인했을 때 이 안이면 늦게라도 울린다.
-    private static let lateLimit: TimeInterval = 3600
+    static let lateLimit: TimeInterval = 3600
     /// 0.6초 간격으로 세 번 울리고 두 박자 쉰다. 끌 때까지 되풀이하되 1분이 지나면 소리만 멈춘다.
     private static let ringInterval: TimeInterval = 0.6
     private static let ringPattern = [true, true, true, false, false]
-    private static let soundLimit: TimeInterval = 60
+    static var soundLimit: TimeInterval = 60
+    /// 이름을 칠 때마다 쓰지 않도록 잠깐 모았다가 저장한다.
+    private static let saveDelay: TimeInterval = 0.5
 
     private enum Keys {
         static let mode = "timerMode", pinned = "timerPinned", timers = "timers", alarms = "alarms"
@@ -99,70 +138,82 @@ final class FlipTimer: ObservableObject {
         static let alarmName = "alarmName", alarmMinutes = "alarmMinutes"
         static let alarmEnabled = "alarmEnabled", alarmRepeats = "alarmRepeats"
     }
-    /// 도는·멈춘 상태도 저장해 앱을 다시 켜도 이어 간다. 예전에 저장한 값에는 뒤의 셋이 없다.
-    private struct SavedTimer: Codable {
+    /// 예전에 저장한 값에는 뒤쪽 칸들이 없으므로 모두 선택 사항이다.
+    struct SavedTimer: Codable {
         var id: UUID
         var name: String
         var duration: Int
+        var number: Int?
         var phase: String?
         var endDate: Date?
         var pausedRemaining: Int?
     }
-    private struct SavedAlarm: Codable { var id: UUID; var name: String; var minutes: Int; var enabled: Bool; var repeats: Bool }
-    private let defaults = UserDefaults.standard
+    struct SavedAlarm: Codable {
+        var id: UUID
+        var name: String
+        var minutes: Int
+        var enabled: Bool
+        var repeats: Bool?
+        var number: Int?
+        var days: [Int]?
+        var snoozeUntil: Date?
+    }
+    private let defaults: UserDefaults
 
-    @Published var mode: Mode { didSet { defaults.set(mode.rawValue, forKey: Keys.mode) } }
+    @Published var mode: Mode { didSet { defaults.set(mode.rawValue, forKey: Keys.mode); scheduleTick() } }
     /// 항상 위. 기본은 켬.
     @Published var isPinned: Bool { didSet { defaults.set(isPinned, forKey: Keys.pinned) } }
     @Published private(set) var now = Date()
-    /// 창이 화면에 있는지. 시계를 보여 줄 때만 자주 깨어난다.
-    var isDisplayed = false { didSet { updateTicker() } }
+    /// 창이 보이는지. 창이 가려졌거나 닫혔으면 숫자판을 위해 깨어나지 않는다.
+    var isDisplayed = false { didSet { if isDisplayed != oldValue { tick() } } }
     /// 울리기 시작하면 불린다. 창을 앞으로 가져오는 데 쓴다.
     var onRing: (() -> Void)?
     /// 지운 항목을 되살리는 데 쓴다. 창이 넘겨준다.
     weak var undoManager: UndoManager?
     private var ticker: Timer?
     private var soundTimer: Timer?
+    private var pendingSave: DispatchWorkItem?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     /// 적어도 하나는 있다.
-    @Published private(set) var timers: [TimerItem] { didSet { saveTimers(); updateTicker() } }
-    @Published private(set) var alarms: [AlarmItem] { didSet { saveAlarms(); updateTicker() } }
+    @Published private(set) var timers: [TimerItem] { didSet { setNeedsSave(); scheduleTick() } }
+    @Published private(set) var alarms: [AlarmItem] { didSet { setNeedsSave(); scheduleTick() } }
     /// 큰 숫자판에 보이는 타이머.
     @Published var selectedTimerID: UUID
     /// 알람 칸에서 고쳐지는 알람.
     @Published var selectedAlarmID: UUID?
     @Published private(set) var ringingAlarmIDs: Set<UUID> = []
 
-    init() {
-        let defaults = self.defaults
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         mode = defaults.string(forKey: Keys.mode).flatMap(Mode.init) ?? .timer
         isPinned = defaults.object(forKey: Keys.pinned) as? Bool ?? true
+        let start = Date()
 
         var timers: [TimerItem]
         if let data = defaults.data(forKey: Keys.timers),
            let saved = try? JSONDecoder().decode([SavedTimer].self, from: data) {
-            timers = saved.map { Self.restore($0, at: Date()) }
+            timers = saved.enumerated().map { Self.restore($1, index: $0, at: start) }
         } else {
             let duration = defaults.integer(forKey: Keys.duration)
-            timers = [TimerItem(name: defaults.string(forKey: Keys.name) ?? "",
-                                duration: duration > 0 ? duration : Self.defaultDuration)]
+            timers = [TimerItem(name: defaults.string(forKey: Keys.name) ?? "", number: 1,
+                                duration: duration > 0 ? min(duration, Self.maxDuration) : Self.defaultDuration)]
         }
-        if timers.isEmpty { timers = [TimerItem(name: "", duration: Self.defaultDuration)] }
+        if timers.isEmpty { timers = [TimerItem(number: 1, duration: Self.defaultDuration)] }
 
         var alarms: [AlarmItem]
         if let data = defaults.data(forKey: Keys.alarms),
            let saved = try? JSONDecoder().decode([SavedAlarm].self, from: data) {
-            alarms = saved.map { AlarmItem(id: $0.id, name: $0.name, minutes: $0.minutes, enabled: $0.enabled, repeats: $0.repeats) }
+            alarms = saved.enumerated().map { Self.restore($1, index: $0) }
         } else if [Keys.alarmName, Keys.alarmMinutes, Keys.alarmEnabled, Keys.alarmRepeats].contains(where: { defaults.object(forKey: $0) != nil }) {
-            alarms = [AlarmItem(name: defaults.string(forKey: Keys.alarmName) ?? "",
+            let repeats = defaults.object(forKey: Keys.alarmRepeats) as? Bool ?? true
+            alarms = [AlarmItem(name: defaults.string(forKey: Keys.alarmName) ?? "", number: 1,
                                 minutes: defaults.object(forKey: Keys.alarmMinutes) as? Int ?? 9 * 60,
                                 enabled: defaults.bool(forKey: Keys.alarmEnabled),
-                                repeats: defaults.object(forKey: Keys.alarmRepeats) as? Bool ?? true)]
+                                days: repeats ? AlarmItem.everyDay : [])]
         } else {
             alarms = []
         }
-        let start = Date()
         for i in alarms.indices { alarms[i].schedule(after: start) }
 
         self.timers = timers
@@ -171,38 +222,88 @@ final class FlipTimer: ObservableObject {
         selectedAlarmID = alarms.first?.id
         // 옛 값을 새 구조로 옮겼으면 다시 옮기지 않게 지운다.
         if defaults.data(forKey: Keys.timers) == nil || defaults.data(forKey: Keys.alarms) == nil {
-            saveTimers()
-            saveAlarms()
+            save()
             for key in [Keys.name, Keys.duration, Keys.alarmName, Keys.alarmMinutes, Keys.alarmEnabled, Keys.alarmRepeats] {
                 defaults.removeObject(forKey: key)
             }
         }
         observeClock()
-        updateTicker()
+        scheduleTick()
     }
 
     deinit {
         for (center, observer) in observers { center.removeObserver(observer) }
+        ticker?.invalidate()
+        soundTimer?.invalidate()
     }
 
+    // MARK: 저장
+
     /// 앱이 꺼진 동안 끝난 타이머는 1시간 안이면 켜자마자 울리고, 그보다 오래됐으면 처음 시간으로 둔다.
-    private static func restore(_ saved: SavedTimer, at now: Date) -> TimerItem {
-        var item = TimerItem(id: saved.id, name: saved.name, duration: min(max(saved.duration, 1), maxDuration))
-        switch saved.phase {
-        case "running":
+    private static func restore(_ saved: SavedTimer, index: Int, at now: Date) -> TimerItem {
+        let (name, number) = splitDefaultName(saved.name, prefixes: ["타이머", "Timer"], fallback: saved.number ?? index + 1)
+        var item = TimerItem(id: saved.id, name: name, number: number, duration: min(max(saved.duration, 1), maxDuration))
+        switch saved.phase.flatMap(TimerItem.Phase.init) {
+        case .running:
             if let end = saved.endDate, now.timeIntervalSince(end) < lateLimit {
                 item.phase = .running
                 item.endDate = end
             }
-        case "paused":
+        case .paused:
             if let left = saved.pausedRemaining, left > 0 {
                 item.phase = .paused
                 item.pausedRemaining = min(left, maxDuration)
             }
-        default:
+        case .idle, .ringing, nil:
             break
         }
         return item
+    }
+
+    private static func restore(_ saved: SavedAlarm, index: Int) -> AlarmItem {
+        let (name, number) = splitDefaultName(saved.name, prefixes: ["알람", "Alarm"], fallback: saved.number ?? index + 1)
+        let days = saved.days.map { Set($0.filter { (1...7).contains($0) }) }
+            ?? ((saved.repeats ?? true) ? AlarmItem.everyDay : [])
+        var item = AlarmItem(id: saved.id, name: name, number: number, minutes: min(max(saved.minutes, 0), 24 * 60 - 1),
+                             enabled: saved.enabled, days: days)
+        item.snoozeUntil = saved.snoozeUntil
+        return item
+    }
+
+    /// 예전 판은 새 항목에 "타이머 2"처럼 그때의 언어로 이름을 박아 두었다. 그런 이름은 비우고 번호만 남긴다.
+    private static func splitDefaultName(_ name: String, prefixes: [String], fallback: Int) -> (String, Int) {
+        for prefix in prefixes where name.hasPrefix(prefix + " ") {
+            if let number = Int(name.dropFirst(prefix.count + 1)), number > 0 { return ("", number) }
+        }
+        return (name, fallback)
+    }
+
+    private func setNeedsSave() {
+        guard pendingSave == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.save() }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.saveDelay, execute: work)
+    }
+
+    /// 미뤄 둔 저장을 바로 한다. 앱을 끝낼 때 부른다.
+    func save() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        let savedTimers = timers.map { item -> SavedTimer in
+            var saved = SavedTimer(id: item.id, name: item.name, duration: item.duration, number: item.number)
+            switch item.phase {
+            case .running: saved.phase = item.phase.rawValue; saved.endDate = item.endDate
+            case .paused: saved.phase = item.phase.rawValue; saved.pausedRemaining = item.pausedRemaining
+            case .idle, .ringing: break
+            }
+            return saved
+        }
+        let savedAlarms = alarms.map {
+            SavedAlarm(id: $0.id, name: $0.name, minutes: $0.minutes, enabled: $0.enabled, repeats: $0.repeats,
+                       number: $0.number, days: $0.days.sorted(), snoozeUntil: $0.snoozeUntil)
+        }
+        if let data = try? JSONEncoder().encode(savedTimers) { defaults.set(data, forKey: Keys.timers) }
+        if let data = try? JSONEncoder().encode(savedAlarms) { defaults.set(data, forKey: Keys.alarms) }
     }
 
     /// 시간대·시계·날짜가 바뀌면 알람의 다음 시각을 다시 셈한다. 잠자기에서 깨면 바로 확인한다.
@@ -234,24 +335,6 @@ final class FlipTimer: ObservableObject {
         if rescheduled != alarms { alarms = rescheduled }
     }
 
-    private func saveTimers() {
-        let saved = timers.map { item -> SavedTimer in
-            var saved = SavedTimer(id: item.id, name: item.name, duration: item.duration)
-            switch item.phase {
-            case .running: saved.phase = "running"; saved.endDate = item.endDate
-            case .paused: saved.phase = "paused"; saved.pausedRemaining = item.pausedRemaining
-            case .idle, .ringing: break
-            }
-            return saved
-        }
-        if let data = try? JSONEncoder().encode(saved) { defaults.set(data, forKey: Keys.timers) }
-    }
-
-    private func saveAlarms() {
-        let saved = alarms.map { SavedAlarm(id: $0.id, name: $0.name, minutes: $0.minutes, enabled: $0.enabled, repeats: $0.repeats) }
-        if let data = try? JSONEncoder().encode(saved) { defaults.set(data, forKey: Keys.alarms) }
-    }
-
     // MARK: 상태
 
     var selectedTimer: TimerItem { timers.first { $0.id == selectedTimerID } ?? timers[0] }
@@ -281,27 +364,24 @@ final class FlipTimer: ObservableObject {
         }
     }
 
-    /// 다음에 울릴 켜진 알람, 이른 것부터.
+    /// 앞으로 울릴 알람(다시 알림 포함), 이른 것부터.
     var upcomingAlarms: [AlarmItem] {
-        alarms.filter { $0.next != nil }.sorted { $0.next! < $1.next! }
+        alarms.filter { $0.upcoming != nil }.sorted { $0.upcoming! < $1.upcoming! }
     }
 
-    /// 이름을 비워 둔 항목은 목록 순서로 부른다.
     func displayName(of item: TimerItem) -> String {
-        if !item.name.trimmingCharacters(in: .whitespaces).isEmpty { return item.name }
-        return L("타이머 %d", (timers.firstIndex { $0.id == item.id } ?? 0) + 1)
+        item.name.trimmingCharacters(in: .whitespaces).isEmpty ? L("타이머 %d", item.number) : item.name
     }
 
     func displayName(of item: AlarmItem) -> String {
-        if !item.name.trimmingCharacters(in: .whitespaces).isEmpty { return item.name }
-        return L("알람 %d", (alarms.firstIndex { $0.id == item.id } ?? 0) + 1)
+        item.name.trimmingCharacters(in: .whitespaces).isEmpty ? L("알람 %d", item.number) : item.name
     }
 
     // MARK: 타이머
 
     @discardableResult
     func addTimer() -> UUID {
-        let item = TimerItem(name: L("타이머 %d", timers.count + 1), duration: selectedTimer.duration)
+        let item = TimerItem(number: (timers.map(\.number).max() ?? 0) + 1, duration: selectedTimer.duration)
         timers.append(item)
         selectedTimerID = item.id
         return item.id
@@ -365,6 +445,12 @@ final class FlipTimer: ObservableObject {
         now = Date()
     }
 
+    /// 도는 타이머는 멈추고, 멈춘 타이머는 시작한다.
+    func toggle(_ id: UUID) {
+        guard let item = timers.first(where: { $0.id == id }) else { return }
+        if item.phase == .running { pause(id) } else { start(id) }
+    }
+
     private func updateTimer(_ id: UUID, _ change: (inout TimerItem) -> Void) {
         guard let index = timers.firstIndex(where: { $0.id == id }) else { return }
         var item = timers[index]
@@ -377,8 +463,8 @@ final class FlipTimer: ObservableObject {
     /// 다음 정각에 매일 울리는 알람을 켜서 더한다. 시각은 그다음에 고친다.
     @discardableResult
     func addAlarm(minutes: Int? = nil) -> UUID {
-        let c = Calendar.current.dateComponents([.hour], from: Date())
-        var item = AlarmItem(name: L("알람 %d", alarms.count + 1), minutes: minutes ?? ((c.hour ?? 0) + 1) % 24 * 60)
+        let hour = Calendar.current.component(.hour, from: Date())
+        var item = AlarmItem(number: (alarms.map(\.number).max() ?? 0) + 1, minutes: minutes ?? (hour + 1) % 24 * 60)
         item.schedule(after: Date())
         alarms.append(item)
         selectedAlarmID = item.id
@@ -414,21 +500,62 @@ final class FlipTimer: ObservableObject {
         updateAlarm(id) { $0.minutes = (c.hour ?? 0) * 60 + (c.minute ?? 0) }
     }
 
+    /// 끄면 다시 알림도 지운다.
     func setAlarmEnabled(_ id: UUID, _ enabled: Bool) {
-        updateAlarm(id) { $0.enabled = enabled }
+        updateAlarm(id) {
+            $0.enabled = enabled
+            if !enabled { $0.snoozeUntil = nil }
+        }
     }
 
-    func setAlarmRepeats(_ id: UUID, _ repeats: Bool) {
-        updateAlarm(id) { $0.repeats = repeats }
+    func setAlarmDays(_ id: UUID, _ days: Set<Int>) {
+        updateAlarm(id) { $0.days = days }
     }
 
-    /// 시각이나 켜기가 바뀌면 다음에 울릴 때를 다시 셈한다.
+    /// 시각·켜기·요일이 바뀌면 다음에 울릴 때를 다시 셈한다.
     private func updateAlarm(_ id: UUID, _ change: (inout AlarmItem) -> Void) {
         guard let index = alarms.firstIndex(where: { $0.id == id }) else { return }
-        var item = alarms[index]
+        let old = alarms[index]
+        var item = old
         change(&item)
-        if item.minutes != alarms[index].minutes || item.enabled != alarms[index].enabled { item.schedule(after: Date()) }
-        if item != alarms[index] { alarms[index] = item }
+        if item.minutes != old.minutes || item.enabled != old.enabled || item.days != old.days { item.schedule(after: Date()) }
+        if item != old { alarms[index] = item }
+    }
+
+    // MARK: 고른 항목
+
+    /// 스페이스: 타이머는 시작·일시정지, 알람은 켜기·끄기.
+    func toggleSelected() {
+        switch mode {
+        case .timer:
+            toggle(selectedTimerID)
+        case .alarm:
+            if let alarm = selectedAlarm { setAlarmEnabled(alarm.id, !alarm.enabled) }
+        }
+    }
+
+    /// 위·아래 화살표로 목록에서 고른다.
+    func selectAdjacent(_ offset: Int) {
+        switch mode {
+        case .timer:
+            guard let index = timers.firstIndex(where: { $0.id == selectedTimerID }) else { return }
+            selectedTimerID = timers[max(0, min(timers.count - 1, index + offset))].id
+        case .alarm:
+            guard !alarms.isEmpty else { return }
+            let index = alarms.firstIndex { $0.id == selectedAlarmID } ?? (offset > 0 ? -1 : alarms.count)
+            selectedAlarmID = alarms[max(0, min(alarms.count - 1, index + offset))].id
+        }
+    }
+
+    func addItem() {
+        if mode == .timer { addTimer() } else { addAlarm() }
+    }
+
+    func removeSelected() {
+        switch mode {
+        case .timer: removeTimer(selectedTimerID)
+        case .alarm: if let id = selectedAlarmID { removeAlarm(id) }
+        }
     }
 
     // MARK: 울림
@@ -441,26 +568,82 @@ final class FlipTimer: ObservableObject {
         ringingAlarmIDs = []
         stopSound()
         now = Date()
-        updateTicker()
+        scheduleTick()
+    }
+
+    /// 울리는 것을 모두 끄고 5분 뒤에 한 번 더 울린다. 타이머는 5분짜리로 다시 돈다.
+    func snooze() {
+        let date = Date()
+        let until = date.addingTimeInterval(TimeInterval(Self.snoozeMinutes * 60))
+        if timers.contains(where: { $0.phase == .ringing }) {
+            timers = timers.map {
+                var t = $0
+                if t.phase == .ringing { t.phase = .running; t.endDate = until }
+                return t
+            }
+        }
+        if !ringingAlarmIDs.isEmpty {
+            alarms = alarms.map {
+                var a = $0
+                if ringingAlarmIDs.contains(a.id) { a.snoozeUntil = until }
+                return a
+            }
+        }
+        ringingAlarmIDs = []
+        stopSound()
+        now = date
+        scheduleTick()
     }
 
     // MARK: 시계
 
-    /// 화면에 보이거나 곧 울릴 때는 자주, 알람만 기다릴 때는 1초마다, 할 일이 없으면 멈춘다.
-    private var wantedInterval: TimeInterval? {
-        if isDisplayed || isRinging || timers.contains(where: { $0.phase == .running }) { return 0.1 }
-        guard let soonest = upcomingAlarms.first?.next else { return nil }
-        return soonest.timeIntervalSince(Date()) < 15 ? 0.1 : 1
+    /// 다음에 화면이나 상태가 바뀌는 순간에만 깨어난다.
+    /// 숫자는 초가 바뀔 때, 깜빡임은 0.5초마다, 알람은 10초 전과 울릴 때. 할 일이 없으면 멈춘다.
+    func nextWake(after now: Date) -> Date? {
+        let reference = now.timeIntervalSinceReferenceDate
+        let nextSecond = Date(timeIntervalSinceReferenceDate: floor(reference) + 1)
+        let nextHalf = Date(timeIntervalSinceReferenceDate: floor(reference * 2) / 2 + 0.5)
+        var dates: [Date] = []
+
+        for item in timers where item.phase == .running {
+            guard let end = item.endDate else { continue }
+            let left = end.timeIntervalSince(now)
+            // 남은 초가 하나 줄어드는 순간.
+            dates.append(left <= 0 ? now : end.addingTimeInterval(-(ceil(left) - 1)))
+        }
+        if let soonest = upcomingAlarms.first?.upcoming {
+            let left = soonest.timeIntervalSince(now)
+            dates.append(soonest)
+            if left > TimeInterval(Self.warningSeconds) { dates.append(soonest.addingTimeInterval(-TimeInterval(Self.warningSeconds))) }
+            // 메뉴바에 초 단위로 남은 시간을 보여 준다.
+            if left <= Self.menuBarAlarmWindow {
+                dates.append(nextSecond)
+            } else {
+                dates.append(soonest.addingTimeInterval(-Self.menuBarAlarmWindow))
+            }
+        }
+        if isDisplayed {
+            // 알람 칸은 지금 시각과 남은 시간을 보여 준다.
+            if mode == .alarm { dates.append(nextSecond) }
+            if isWarning || isRinging { dates.append(nextHalf) }
+        }
+        guard let soonest = dates.min() else { return nil }
+        // 멀리 있는 알람만 기다릴 때도 가끔 깨어나 시계가 어긋나지 않았는지 본다.
+        return min(soonest, now.addingTimeInterval(300))
     }
 
-    private func updateTicker() {
-        let wanted = wantedInterval
-        guard wanted != ticker?.timeInterval else { return }
+    private func scheduleTick() {
+        guard let wake = nextWake(after: Date()) else {
+            ticker?.invalidate()
+            ticker = nil
+            return
+        }
+        // 경계를 살짝 넘긴 뒤에 깨어나야 바뀐 값을 읽는다.
+        let fireDate = max(wake, Date()).addingTimeInterval(0.005)
+        if let ticker, ticker.isValid, abs(ticker.fireDate.timeIntervalSince(fireDate)) < 0.002 { return }
         ticker?.invalidate()
-        ticker = nil
-        guard let wanted else { return }
-        let timer = Timer(timeInterval: wanted, repeats: true) { [weak self] _ in self?.tick() }
-        timer.tolerance = wanted / 5
+        let timer = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in self?.tick() }
+        timer.tolerance = 0.01
         // 메뉴를 열어 둔 동안에도 멈추지 않게 한다.
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
@@ -479,10 +662,18 @@ final class FlipTimer: ObservableObject {
         if newTimers != timers { timers = newTimers }
 
         var newAlarms = alarms
+        var newRinging = ringingAlarmIDs
         for i in newAlarms.indices {
+            if let snooze = newAlarms[i].snoozeUntil, now >= snooze {
+                newAlarms[i].snoozeUntil = nil
+                if now.timeIntervalSince(snooze) < Self.lateLimit {
+                    newRinging.insert(newAlarms[i].id)
+                    rangAlarm = rangAlarm ?? newAlarms[i].id
+                }
+            }
             guard let next = newAlarms[i].next, now >= next else { continue }
             if now.timeIntervalSince(next) < Self.lateLimit {
-                ringingAlarmIDs.insert(newAlarms[i].id)
+                newRinging.insert(newAlarms[i].id)
                 rangAlarm = rangAlarm ?? newAlarms[i].id
             }
             if newAlarms[i].repeats {
@@ -492,6 +683,7 @@ final class FlipTimer: ObservableObject {
                 newAlarms[i].next = nil
             }
         }
+        if newRinging != ringingAlarmIDs { ringingAlarmIDs = newRinging }
         if newAlarms != alarms { alarms = newAlarms }
 
         // 울린 것을 큰 판에 보여 준다. 타이머와 알람이 함께 울리면 타이머를 먼저 보여 준다.
@@ -504,7 +696,7 @@ final class FlipTimer: ObservableObject {
             mode = .timer
         }
         if rangTimer != nil || rangAlarm != nil { ring() }
-        updateTicker()
+        scheduleTick()
     }
 
     /// 새로 울릴 때마다 1분 제한을 다시 센다.
@@ -526,13 +718,31 @@ final class FlipTimer: ObservableObject {
         timer.fire()
     }
 
-    /// 소리가 울리는 중인지. 시험에서 확인한다.
+    /// 소리가 울리는 중인지.
     var isSounding: Bool { soundTimer != nil }
 
     private func stopSound() {
         soundTimer?.invalidate()
         soundTimer = nil
         AlarmSound.stop()
+    }
+
+    // MARK: 시험용
+
+    /// 시험에서 분 단위 알람을 기다리지 않도록 다음 시각을 옮긴다.
+    func forceNext(_ id: UUID, _ date: Date) {
+        guard let index = alarms.firstIndex(where: { $0.id == id }) else { return }
+        alarms[index].next = date
+    }
+
+    func forceSnooze(_ id: UUID, _ date: Date) {
+        guard let index = alarms.firstIndex(where: { $0.id == id }) else { return }
+        alarms[index].snoozeUntil = date
+    }
+
+    func forceTimerEnd(_ id: UUID, _ date: Date) {
+        guard let index = timers.firstIndex(where: { $0.id == id }) else { return }
+        timers[index].endDate = date
     }
 
     /// "90"은 90분, "5:00"은 5분, "1:30:00"은 1시간 30분.
@@ -567,3 +777,18 @@ func clockText(_ seconds: Int) -> String {
     seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
                     : String(format: "%d:%02d", seconds / 60, seconds % 60)
 }
+
+/// "매일", "평일", "주말", "한 번", 또는 "월 수 금".
+func daysText(_ days: Set<Int>) -> String {
+    switch days {
+    case []: return L("한 번")
+    case AlarmItem.everyDay: return L("매일")
+    case AlarmItem.weekdays: return L("평일")
+    case AlarmItem.weekend: return L("주말")
+    default: return weekdayOrder.filter(days.contains).map { L(weekdayNames[$0 - 1]) }.joined(separator: " ")
+    }
+}
+
+/// 월요일부터 적는다.
+let weekdayOrder = [2, 3, 4, 5, 6, 7, 1]
+let weekdayNames = ["일", "월", "화", "수", "목", "금", "토"]

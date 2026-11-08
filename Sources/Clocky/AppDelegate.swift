@@ -3,12 +3,13 @@ import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings = ClockySettings()
-    private(set) lazy var window = FlipTimerWindowController(settings: settings)
+    private(set) lazy var window = ClockStoreWindowController(settings: settings)
     private(set) var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
     /// 메뉴를 열 때마다 새로 만드는 타이머·알람 상태 줄.
     private var statusLineItems: [NSMenuItem] = []
     private var subscriptions: Set<AnyCancellable> = []
+    private var showingAlarmIcon = false
 
     private static let launchedKey = "hasLaunched"
 
@@ -21,8 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildStatusMenu()
 
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
-        window.timer.$now.combineLatest(window.timer.$timers)
-            .sink { [weak self] _, _ in self?.updateStatusTitle() }
+        window.store.$now.combineLatest(window.store.$timers, window.store.$alarms)
+            .sink { [weak self] _, _, _ in self?.updateStatusTitle() }
             .store(in: &subscriptions)
         NotificationCenter.default.addObserver(forName: Localization.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.rebuildStatusMenu()
@@ -36,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// 미뤄 둔 저장을 마저 한다.
+    func applicationWillTerminate(_ notification: Notification) {
+        window.store.save()
+    }
+
     /// 메뉴바 아이콘을 누르지 않고 앱을 다시 열면(Finder에서 더블클릭 등) 창을 보여 준다.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window.show()
@@ -44,12 +50,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 여러 타이머가 돌면 가장 먼저 끝나는 것을 보여 준다. 도는 것이 없으면 일시정지한 것 중에서 고른다.
     private func updateStatusTitle() {
-        let timer = window.timer
-        let now = timer.now
-        let shown = timer.timers.filter { $0.phase == .ringing }.first
-            ?? timer.timers.filter { $0.phase == .running }.min { $0.remaining(at: now) < $1.remaining(at: now) }
-            ?? timer.timers.filter { $0.phase == .paused }.min { $0.remaining(at: now) < $1.remaining(at: now) }
-        let title = shown.map { " " + clockText($0.remaining(at: now)) } ?? ""
+        let store = window.store
+        let now = store.now
+        let active = store.timers.filter { $0.phase == .ringing }.first
+            ?? store.timers.filter { $0.phase == .running }.min { $0.remaining(at: now) < $1.remaining(at: now) }
+        let paused = store.timers.filter { $0.phase == .paused }.min { $0.remaining(at: now) < $1.remaining(at: now) }
+        var title = ""
+        // 도는 타이머가 없으면 1시간 안에 울릴 알람까지 남은 시간을 알람 시계 모양과 함께 보여 준다.
+        // 그것도 없으면 일시정지한 타이머를 보여 준다.
+        var showsAlarm = false
+        if let active {
+            title = " " + clockText(active.remaining(at: now))
+        } else if let soonest = store.upcomingAlarms.first?.upcoming,
+                  case let left = soonest.timeIntervalSince(now), left > 0 && left <= ClockStore.menuBarAlarmWindow {
+            title = " " + clockText(Int(ceil(left - 0.001)))
+            showsAlarm = true
+        } else if let paused {
+            title = " " + clockText(paused.remaining(at: now))
+        }
+        if showsAlarm != showingAlarmIcon, let button = statusItem?.button {
+            showingAlarmIcon = showsAlarm
+            button.image = showsAlarm ? MenuBarIcon.alarm() : MenuBarIcon.make()
+        }
         guard let button = statusItem?.button, button.title != title else { return }
         button.title = title
         button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -105,20 +127,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusLines(in menu: NSMenu) {
         statusLineItems.forEach(menu.removeItem)
         statusLineItems = []
-        let timer = window.timer
+        let store = window.store
         let now = Date()
         var lines: [(String, String)] = []
-        for item in timer.timers {
-            let name = timer.displayName(of: item)
+        for item in store.timers {
+            let name = store.displayName(of: item)
             switch item.phase {
             case .running: lines.append((L("%@ · %@ 남음", name, clockText(item.remaining(at: now))), "timer:\(item.id)"))
             case .paused: lines.append((L("%@ · 일시정지 %@", name, clockText(item.remaining(at: now))), "timer:\(item.id)"))
             case .idle, .ringing: break
             }
         }
-        for item in timer.upcomingAlarms {
-            guard let next = item.next else { continue }
-            lines.append((L("%@ · %@ (%@ 남음)", timer.displayName(of: item), settings.timeText(next),
+        for item in store.upcomingAlarms {
+            guard let next = item.upcoming else { continue }
+            lines.append((L("%@ · %@ (%@ 남음)", store.displayName(of: item), settings.timeText(next),
                             remainingText(until: next, from: now)), "alarm:\(item.id)"))
         }
         for (index, line) in lines.enumerated() {
@@ -135,16 +157,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showItem(_ sender: NSMenuItem) {
-        let timer = window.timer
+        let store = window.store
         if let key = sender.representedObject as? String {
             let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
             if parts.count == 2, let id = UUID(uuidString: parts[1]) {
-                if parts[0] == "timer", timer.timers.contains(where: { $0.id == id }) {
-                    timer.selectedTimerID = id
-                    timer.mode = .timer
-                } else if parts[0] == "alarm", timer.alarms.contains(where: { $0.id == id }) {
-                    timer.selectedAlarmID = id
-                    timer.mode = .alarm
+                if parts[0] == "timer", store.timers.contains(where: { $0.id == id }) {
+                    store.selectedTimerID = id
+                    store.mode = .timer
+                } else if parts[0] == "alarm", store.alarms.contains(where: { $0.id == id }) {
+                    store.selectedAlarmID = id
+                    store.mode = .alarm
                 }
             }
         }

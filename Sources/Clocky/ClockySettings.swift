@@ -64,10 +64,28 @@ final class ClockySettings: ObservableObject {
 
     /// "오전 9:00" 또는 "9:00 AM".
     func timeText(_ date: Date) -> String {
+        formatter(language == .korean ? "a h:mm" : "h:mm a").string(from: date)
+    }
+
+    /// "오늘", "내일", 그 뒤는 "수요일"·"Wednesday".
+    func dayText(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return L("오늘") }
+        if calendar.isDateInTomorrow(date) { return L("내일") }
+        return formatter("EEEE").string(from: date)
+    }
+
+    /// 목록을 그릴 때마다 만들지 않도록 언어·형식마다 하나씩 둔다. 시간대가 바뀌면 다시 만든다.
+    private var formatters: [String: DateFormatter] = [:]
+
+    private func formatter(_ format: String) -> DateFormatter {
+        let key = "\(language.rawValue)|\(format)|\(TimeZone.current.identifier)"
+        if let cached = formatters[key] { return cached }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: language == .korean ? "ko_KR" : "en_US")
-        formatter.dateFormat = language == .korean ? "a h:mm" : "h:mm a"
-        return formatter.string(from: date)
+        formatter.dateFormat = format
+        formatters[key] = formatter
+        return formatter
     }
 }
 
@@ -123,10 +141,24 @@ enum Localization {
         "일시정지": "Pause",
         "계속": "Resume",
         "초기화": "Reset",
-        "눌러서 알람 끄기": "Click to stop",
         "알람 추가를 눌러 시각을 등록합니다": "Click Add Alarm to set a time",
         // 목록
         "타이머 %d": "Timer %d",
+        "창을 누르거나 Esc로 끄기": "Click the window or press Esc to stop",
+        "%d분 뒤 다시 울림": "Snooze %d min",
+        "S 키로도 됩니다": "You can also press S",
+        "다시 울림": "Snoozed",
+        "반복": "Repeat",
+        "평일": "Weekdays",
+        "주말": "Weekends",
+        "일": "Sun", "월": "Mon", "화": "Tue", "수": "Wed", "목": "Thu", "금": "Fri", "토": "Sat",
+        "켜짐": "On",
+        "꺼짐": "Off",
+        "%@ 시작": "Start %@",
+        "%@ 일시정지": "Pause %@",
+        "%@ 삭제": "Delete %@",
+        "%@ 켜기": "%@ on",
+        "고르기": "Select",
         "알람 %d": "Alarm %d",
         "타이머 %d개": "Timers: %d",
         "알람 %d개": "Alarms: %d",

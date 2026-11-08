@@ -2,10 +2,10 @@ import AppKit
 import Combine
 import SwiftUI
 
-final class FlipTimerWindowController: NSObject, NSWindowDelegate {
+final class ClockStoreWindowController: NSObject, NSWindowDelegate {
     static let contentSize = NSSize(width: 340, height: 420)
 
-    let timer = FlipTimer()
+    let store = ClockStore()
     private let settings: ClockySettings
     private(set) lazy var panel: TimerPanel = makePanel()
     private var isLoaded = false
@@ -18,8 +18,8 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
     init(settings: ClockySettings) {
         self.settings = settings
         super.init()
-        timer.onRing = { [weak self] in self?.show() }
-        timer.undoManager = undoManager
+        store.onRing = { [weak self] in self?.show() }
+        store.undoManager = undoManager
         // 타이머를 띄워 둔 모니터를 빼면 남은 화면으로 옮긴다.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -35,14 +35,23 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
         if !panel.isVisible { panel.setFrameOrigin(savedOrigin() ?? defaultOrigin()) }
         panel.orderFrontRegardless()
         panel.makeKey()
-        timer.isDisplayed = true
+        updateDisplayed()
         // 이름 칸이 처음부터 선택돼 있으면 어수선하다. 눌러야 편집된다.
         DispatchQueue.main.async { self.panel.makeFirstResponder(nil) }
     }
 
     /// 닫아도 타이머와 알람은 계속 돈다.
     func windowWillClose(_ notification: Notification) {
-        timer.isDisplayed = false
+        store.isDisplayed = false
+    }
+
+    /// 다른 창에 완전히 가려졌거나 다른 데스크톱에 있으면 숫자판을 위해 깨어나지 않는다.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        updateDisplayed()
+    }
+
+    private func updateDisplayed() {
+        store.isDisplayed = panel.isVisible && panel.occlusionState.contains(.visible)
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -89,14 +98,16 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
-        let hosting = NSHostingView(rootView: FlipTimerView(timer: timer, settings: settings))
+        var view = FlipTimerView(store: store, settings: settings)
+        view.onSnoozeFrame = { [weak panel] frame in panel?.snoozeFrame = frame }
+        let hosting = NSHostingView(rootView: view)
         // 내용에 따라 창 크기가 바뀌지 않게 한다. 제목 표시줄까지 내용이 덮으므로 창 전체 크기를 정한다.
         hosting.sizingOptions = []
         panel.contentView = hosting
         panel.setFrame(NSRect(origin: .zero, size: Self.contentSize), display: false)
-        panel.timer = timer
+        panel.store = store
         panel.delegate = self
-        pinSubscription = timer.$isPinned.sink { [weak panel] pinned in
+        pinSubscription = store.$isPinned.sink { [weak panel] pinned in
             panel?.level = pinned ? .floating : .normal
         }
         return panel
@@ -112,16 +123,87 @@ final class FlipTimerWindowController: NSObject, NSWindowDelegate {
 }
 
 final class TimerPanel: NSPanel {
-    weak var timer: FlipTimer?
+    weak var store: ClockStore?
+    /// 다시 울림 버튼의 자리. 창 왼쪽 위가 원점이다.
+    var snoozeFrame: CGRect = .zero
     override var canBecomeKey: Bool { true }
 
+    private enum Key {
+        static let returnKey: UInt16 = 36, space: UInt16 = 49, escape: UInt16 = 53, delete: UInt16 = 51
+        static let forwardDelete: UInt16 = 117, up: UInt16 = 126, down: UInt16 = 125, s: UInt16 = 1
+    }
+
     /// 울리는 동안에는 창 어디를 눌러도 멈춘다. 그 클릭이 시작 버튼까지 눌러 다시 돌지 않게 삼킨다.
+    /// 다시 울림 버튼만은 눌리게 둔다. 키보드로는 Esc·Return·스페이스가 끄고 S가 다시 울림이다.
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .rightMouseDown, let timer, timer.isRinging {
-            timer.stopRinging()
-            return
+        if let store, store.isRinging {
+            switch event.type {
+            case .leftMouseDown, .rightMouseDown:
+                let point = event.locationInWindow
+                let flipped = CGPoint(x: point.x, y: frame.height - point.y)
+                if event.type == .leftMouseDown, snoozeFrame.contains(flipped) { break }
+                store.stopRinging()
+                return
+            case .keyDown:
+                switch event.keyCode {
+                case Key.escape, Key.returnKey, Key.space: store.stopRinging(); return
+                case Key.s where event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty: store.snooze(); return
+                default: break
+                }
+            default:
+                break
+            }
         }
         super.sendEvent(event)
+    }
+
+    /// 이름 칸을 고치는 중이 아닐 때 창으로 오는 키.
+    /// 스페이스는 시작·일시정지(알람은 켜기·끄기), 위·아래는 목록에서 고르기, ⌘⌫는 지우기.
+    override func keyDown(with event: NSEvent) {
+        guard let store else { return super.keyDown(with: event) }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        switch (event.keyCode, flags) {
+        case (Key.space, []): store.toggleSelected()
+        case (Key.up, _) where !flags.contains(.command): store.selectAdjacent(-1)
+        case (Key.down, _) where !flags.contains(.command): store.selectAdjacent(1)
+        case (Key.delete, .command), (Key.forwardDelete, _): store.removeSelected()
+        case (Key.escape, []): makeFirstResponder(nil)
+        default: super.keyDown(with: event)
+        }
+    }
+
+    /// ⌘N은 지금 보는 쪽(타이머·알람)에 하나 더한다. ⌘1·⌘2는 타이머·알람으로 바꾼다.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if let store, flags == .command, event.type == .keyDown {
+            switch event.charactersIgnoringModifiers {
+            case "n": store.addItem(); return true
+            case "1": store.mode = .timer; return true
+            case "2": store.mode = .alarm; return true
+            default: break
+            }
+        }
+        // 메뉴바 앱은 다른 앱이 앞에 있는 채로 이 창만 키보드를 받기도 해서, 편집 메뉴를 거치지 않고 직접 되돌린다.
+        // 이름 칸의 글자 되돌리기도 같은 UndoManager를 쓴다.
+        if event.type == .keyDown, event.charactersIgnoringModifiers?.lowercased() == "z", let undoManager {
+            if flags == .command, undoManager.canUndo { undoManager.undo(); return true }
+            if flags == [.command, .shift], undoManager.canRedo { undoManager.redo(); return true }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    @objc func undo(_ sender: Any?) { undoManager?.undo() }
+    @objc func redo(_ sender: Any?) { undoManager?.redo() }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(undo(_:)) { return undoManager?.canUndo ?? false }
+        if item.action == #selector(redo(_:)) { return undoManager?.canRedo ?? false }
+        return super.validateMenuItem(item)
+    }
+
+    /// 이름을 고치다 Esc를 누르면 편집을 끝낸다.
+    override func cancelOperation(_ sender: Any?) {
+        makeFirstResponder(nil)
     }
 }
 
