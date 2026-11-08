@@ -180,6 +180,92 @@ private func encode<T: Encodable>(_ value: T) -> Data { try! JSONEncoder().encod
         #expect(store.timers.count == 1)
     }
 
+    @Test func 복제하고_여러_개를_한_번에_지우고_되돌린다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        store.undoManager = undo
+        let a = store.addAlarm(minutes: 7 * 60)
+        store.renameAlarm(a, to: "기상")
+        store.setAlarmDays(a, AlarmItem.weekdays)
+        let copy = store.duplicateAlarm(a)!
+        let c = store.alarms.first { $0.id == copy }!
+        #expect(c.name == "기상" && c.days == AlarmItem.weekdays && c.number == 2 && store.alarms[1].id == copy)
+        let t = store.duplicateTimer(store.timers[0].id)!
+        #expect(store.timers.count == 2)
+
+        undo.beginUndoGrouping()
+        store.remove([a, copy, t])
+        undo.endUndoGrouping()
+        #expect(store.alarms.isEmpty && store.timers.count == 1)
+        undo.undo()
+        #expect(store.alarms.map(\.id) == [a, copy] && store.timers.count == 2)
+    }
+
+    @Test func 다시_울림을_취소한다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let a = store.addAlarm(minutes: 7 * 60)
+        store.forceSnooze(a, Date().addingTimeInterval(60))
+        #expect(store.alarms[0].upcoming == store.alarms[0].snoozeUntil)
+        store.cancelSnooze(a)
+        #expect(store.alarms[0].snoozeUntil == nil && store.alarms[0].upcoming == store.alarms[0].next)
+    }
+
+    @Test func 목록은_보기_검색_정렬을_따른다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let settings = ClockySettings()
+        let model = ClockListModel(store: store, settings: settings)
+        let late = store.addAlarm(minutes: 22 * 60); store.renameAlarm(late, to: "약 먹기")
+        let early = store.addAlarm(minutes: 6 * 60); store.renameAlarm(early, to: "기상")
+        let off = store.addAlarm(minutes: 5 * 60); store.renameAlarm(off, to: "운동"); store.setAlarmEnabled(off, false)
+        store.forceNext(late, Date().addingTimeInterval(60))
+        store.forceNext(early, Date().addingTimeInterval(3600))
+
+        model.sort = .next
+        #expect(model.alarms.map(\.id) == [late, early, off])
+        model.sort = .time
+        #expect(model.alarms.map(\.id) == [off, early, late])
+        model.sort = .name
+        #expect(model.alarms.map(\.id) == [early, late, off])
+        model.sort = .added
+        #expect(model.alarms.map(\.id) == [late, early, off])
+
+        model.filter = .alarms
+        #expect(model.timers.isEmpty && model.alarms.count == 3)
+        model.filter = .timers
+        #expect(model.alarms.isEmpty && model.timers.count == 1)
+        model.filter = .all
+        model.query = "기상"
+        #expect(model.alarms.map(\.id) == [early] && model.timers.isEmpty)
+
+        model.setEnabled(false, [late, early, store.timers[0].id])
+        #expect(store.alarms.allSatisfy { !$0.enabled })
+        model.addAlarm()
+        #expect(model.query.isEmpty && model.selection.count == 1 && store.alarms.count == 4)
+    }
+
+    @Test func 설정한_미리_깜빡임_시간을_쓴다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let id = store.timers[0].id
+        store.setDuration(id, 100)
+        store.start(id)
+        store.forceTimerEnd(id, Date().addingTimeInterval(20))
+        store.tick()
+        #expect(!store.isWarning)
+        store.warningSeconds = 30
+        #expect(store.isWarning)
+        store.warningSeconds = 0
+        #expect(!store.isWarning)
+    }
+
     @Test func 글자() {
         let now = Date()
         Localization.language = .korean

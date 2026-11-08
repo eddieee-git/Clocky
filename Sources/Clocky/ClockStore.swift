@@ -35,10 +35,10 @@ struct TimerItem: Identifiable, Equatable {
         }
     }
 
-    func isWarning(at now: Date) -> Bool {
+    func isWarning(at now: Date, within seconds: Int) -> Bool {
         guard phase == .running else { return false }
         let left = remaining(at: now)
-        return left > 0 && left <= ClockStore.warningSeconds
+        return left > 0 && left <= seconds
     }
 }
 
@@ -87,10 +87,10 @@ struct AlarmItem: Identifiable, Equatable {
         Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
     }
 
-    func isWarning(at now: Date) -> Bool {
+    func isWarning(at now: Date, within seconds: Int) -> Bool {
         guard let upcoming else { return false }
         let left = upcoming.timeIntervalSince(now)
-        return left > 0 && left <= TimeInterval(ClockStore.warningSeconds)
+        return left > 0 && left <= TimeInterval(seconds)
     }
 
     mutating func schedule(after date: Date) {
@@ -115,11 +115,8 @@ final class ClockStore: ObservableObject {
     enum Mode: String { case timer, alarm }
 
     static let presets = [1, 3, 5, 10, 25]
-    /// 끝나기 몇 초 전부터 깜빡일지.
-    static let warningSeconds = 10
     static let defaultDuration = 5 * 60
     static let maxDuration = 100 * 3600 - 1
-    static let snoozeMinutes = 5
     /// 메뉴바에 알람까지 남은 시간을 보여 주기 시작하는 때.
     static let menuBarAlarmWindow: TimeInterval = 3600
     /// 잠자기 등으로 늦게 확인했을 때 이 안이면 늦게라도 울린다.
@@ -127,7 +124,6 @@ final class ClockStore: ObservableObject {
     /// 0.6초 간격으로 세 번 울리고 두 박자 쉰다. 끌 때까지 되풀이하되 1분이 지나면 소리만 멈춘다.
     private static let ringInterval: TimeInterval = 0.6
     private static let ringPattern = [true, true, true, false, false]
-    static var soundLimit: TimeInterval = 60
     /// 이름을 칠 때마다 쓰지 않도록 잠깐 모았다가 저장한다.
     private static let saveDelay: TimeInterval = 0.5
 
@@ -160,12 +156,23 @@ final class ClockStore: ObservableObject {
     }
     private let defaults: UserDefaults
 
+    // 설정 창에서 바꾸는 값. 창이 설정을 지켜보다 넣어 준다.
+    /// 끝나기 몇 초 전부터 깜빡일지. 0이면 깜빡이지 않는다.
+    var warningSeconds = 10 { didSet { scheduleTick() } }
+    var snoozeMinutes = 5
+    /// 소리를 되풀이하는 최대 시간.
+    var soundLimit: TimeInterval = 60
+    /// 메뉴바에 1시간 안의 알람까지 남은 시간을 보여 주는지. 끄면 그것 때문에 초마다 깨어나지 않는다.
+    var tracksMenuBarAlarm = true { didSet { scheduleTick() } }
+
     @Published var mode: Mode { didSet { defaults.set(mode.rawValue, forKey: Keys.mode); scheduleTick() } }
     /// 항상 위. 기본은 켬.
     @Published var isPinned: Bool { didSet { defaults.set(isPinned, forKey: Keys.pinned) } }
     @Published private(set) var now = Date()
     /// 창이 보이는지. 창이 가려졌거나 닫혔으면 숫자판을 위해 깨어나지 않는다.
     var isDisplayed = false { didSet { if isDisplayed != oldValue { tick() } } }
+    /// 전체 목록 창이 보이는지. 목록의 남은 시간을 초마다 고친다.
+    var isListDisplayed = false { didSet { if isListDisplayed != oldValue { tick() } } }
     /// 울리기 시작하면 불린다. 창을 앞으로 가져오는 데 쓴다.
     var onRing: (() -> Void)?
     /// 지운 항목을 되살리는 데 쓴다. 창이 넘겨준다.
@@ -344,7 +351,8 @@ final class ClockStore: ObservableObject {
 
     /// 어느 타이머나 알람이 10초 안으로 다가왔을 때.
     var isWarning: Bool {
-        timers.contains { $0.isWarning(at: now) } || alarms.contains { $0.isWarning(at: now) }
+        timers.contains { $0.isWarning(at: now, within: warningSeconds) }
+            || alarms.contains { $0.isWarning(at: now, within: warningSeconds) }
     }
 
     /// 끝나기 직전과 울리는 동안 0.5초마다 켜졌다 꺼진다.
@@ -522,6 +530,41 @@ final class ClockStore: ObservableObject {
         if item != old { alarms[index] = item }
     }
 
+    /// 같은 설정으로 바로 뒤에 하나 더 만든다.
+    @discardableResult
+    func duplicateTimer(_ id: UUID) -> UUID? {
+        guard let index = timers.firstIndex(where: { $0.id == id }) else { return nil }
+        let source = timers[index]
+        let copy = TimerItem(name: source.name, number: (timers.map(\.number).max() ?? 0) + 1, duration: source.duration)
+        timers.insert(copy, at: index + 1)
+        return copy.id
+    }
+
+    @discardableResult
+    func duplicateAlarm(_ id: UUID) -> UUID? {
+        guard let index = alarms.firstIndex(where: { $0.id == id }) else { return nil }
+        let source = alarms[index]
+        var copy = AlarmItem(name: source.name, number: (alarms.map(\.number).max() ?? 0) + 1, minutes: source.minutes,
+                             enabled: source.enabled, days: source.days)
+        copy.schedule(after: Date())
+        alarms.insert(copy, at: index + 1)
+        return copy.id
+    }
+
+    /// 다시 알림만 지우고 정해 둔 시각은 그대로 둔다.
+    func cancelSnooze(_ id: UUID) {
+        updateAlarm(id) { $0.snoozeUntil = nil }
+    }
+
+    /// 여러 개를 한 번에 지운다. ⌘Z 한 번으로 모두 되살아난다.
+    func remove(_ ids: Set<UUID>) {
+        undoManager?.beginUndoGrouping()
+        for id in ids where alarms.contains(where: { $0.id == id }) { removeAlarm(id) }
+        for id in ids where timers.contains(where: { $0.id == id }) { removeTimer(id) }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName(L("삭제"))
+    }
+
     // MARK: 고른 항목
 
     /// 스페이스: 타이머는 시작·일시정지, 알람은 켜기·끄기.
@@ -574,7 +617,7 @@ final class ClockStore: ObservableObject {
     /// 울리는 것을 모두 끄고 5분 뒤에 한 번 더 울린다. 타이머는 5분짜리로 다시 돈다.
     func snooze() {
         let date = Date()
-        let until = date.addingTimeInterval(TimeInterval(Self.snoozeMinutes * 60))
+        let until = date.addingTimeInterval(TimeInterval(snoozeMinutes * 60))
         if timers.contains(where: { $0.phase == .ringing }) {
             timers = timers.map {
                 var t = $0
@@ -614,14 +657,18 @@ final class ClockStore: ObservableObject {
         if let soonest = upcomingAlarms.first?.upcoming {
             let left = soonest.timeIntervalSince(now)
             dates.append(soonest)
-            if left > TimeInterval(Self.warningSeconds) { dates.append(soonest.addingTimeInterval(-TimeInterval(Self.warningSeconds))) }
+            let warning = TimeInterval(warningSeconds)
+            if warning > 0 && left > warning { dates.append(soonest.addingTimeInterval(-warning)) }
             // 메뉴바에 초 단위로 남은 시간을 보여 준다.
-            if left <= Self.menuBarAlarmWindow {
-                dates.append(nextSecond)
-            } else {
-                dates.append(soonest.addingTimeInterval(-Self.menuBarAlarmWindow))
+            if tracksMenuBarAlarm {
+                if left <= Self.menuBarAlarmWindow {
+                    dates.append(nextSecond)
+                } else {
+                    dates.append(soonest.addingTimeInterval(-Self.menuBarAlarmWindow))
+                }
             }
         }
+        if isListDisplayed { dates.append(nextSecond) }
         if isDisplayed {
             // 알람 칸은 지금 시각과 남은 시간을 보여 준다.
             if mode == .alarm { dates.append(nextSecond) }
@@ -706,7 +753,7 @@ final class ClockStore: ObservableObject {
         let started = Date()
         var beat = 0
         let timer = Timer(timeInterval: Self.ringInterval, repeats: true) { [weak self] _ in
-            guard let self, self.isRinging, Date().timeIntervalSince(started) < Self.soundLimit else {
+            guard let self, self.isRinging, Date().timeIntervalSince(started) < self.soundLimit else {
                 self?.stopSound()
                 return
             }

@@ -23,8 +23,13 @@ enum AppLanguage: String, CaseIterable {
 /// 메뉴에서 바꾸는 설정. 창 화면은 이것을 지켜보다 다시 그린다.
 final class ClockySettings: ObservableObject {
     private enum Keys {
-        static let language = "language", alarmSound = "alarmSound"
+        static let language = "language", alarmSound = "alarmSound", volume = "soundVolume"
+        static let warning = "warningSeconds", snooze = "snoozeMinutes", soundLimit = "soundLimitSeconds"
+        static let menuBarTimer = "menuBarShowsTimer", menuBarAlarm = "menuBarShowsAlarm", confirmDelete = "confirmDelete"
     }
+    static let warningChoices = [0, 5, 10, 30, 60]
+    static let snoozeChoices = [1, 3, 5, 10, 15, 30]
+    static let soundLimitChoices = [10, 30, 60, 180, 300]
     private let defaults = UserDefaults.standard
 
     @Published var language: AppLanguage {
@@ -40,6 +45,22 @@ final class ClockySettings: ObservableObject {
             AlarmSound.name = alarmSound
         }
     }
+    /// 알람 소리 크기. 0~1.
+    @Published var soundVolume: Double {
+        didSet {
+            defaults.set(soundVolume, forKey: Keys.volume)
+            AlarmSound.volume = Float(soundVolume)
+        }
+    }
+    /// 끝나기 몇 초 전부터 창을 깜빡일지. 0이면 깜빡이지 않는다.
+    @Published var warningSeconds: Int { didSet { defaults.set(warningSeconds, forKey: Keys.warning) } }
+    @Published var snoozeMinutes: Int { didSet { defaults.set(snoozeMinutes, forKey: Keys.snooze) } }
+    /// 끄지 않으면 소리를 몇 초까지 되풀이할지. 깜빡임은 끌 때까지 계속된다.
+    @Published var soundLimitSeconds: Int { didSet { defaults.set(soundLimitSeconds, forKey: Keys.soundLimit) } }
+    @Published var menuBarShowsTimer: Bool { didSet { defaults.set(menuBarShowsTimer, forKey: Keys.menuBarTimer) } }
+    @Published var menuBarShowsAlarm: Bool { didSet { defaults.set(menuBarShowsAlarm, forKey: Keys.menuBarAlarm) } }
+    /// 지우기 전에 묻는다. 꺼 두어도 ⌘Z로 되살릴 수 있다.
+    @Published var confirmDelete: Bool { didSet { defaults.set(confirmDelete, forKey: Keys.confirmDelete) } }
     /// 시스템의 로그인 항목에 저장되므로 UserDefaults에 두지 않는다.
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// `swift run`으로 실행하면 번들이 없어 로그인 항목에 등록할 수 없다.
@@ -49,8 +70,29 @@ final class ClockySettings: ObservableObject {
         language = defaults.string(forKey: Keys.language).flatMap(AppLanguage.init) ?? .systemDefault
         alarmSound = defaults.string(forKey: Keys.alarmSound).flatMap { AlarmSound.choices.contains($0) ? $0 : nil }
             ?? AlarmSound.defaultName
+        soundVolume = min(max(defaults.object(forKey: Keys.volume) as? Double ?? 1, 0), 1)
+        warningSeconds = (defaults.object(forKey: Keys.warning) as? Int).flatMap { Self.warningChoices.contains($0) ? $0 : nil } ?? 10
+        snoozeMinutes = (defaults.object(forKey: Keys.snooze) as? Int).flatMap { Self.snoozeChoices.contains($0) ? $0 : nil } ?? 5
+        soundLimitSeconds = (defaults.object(forKey: Keys.soundLimit) as? Int)
+            .flatMap { Self.soundLimitChoices.contains($0) ? $0 : nil } ?? 60
+        menuBarShowsTimer = defaults.object(forKey: Keys.menuBarTimer) as? Bool ?? true
+        menuBarShowsAlarm = defaults.object(forKey: Keys.menuBarAlarm) as? Bool ?? true
+        confirmDelete = defaults.bool(forKey: Keys.confirmDelete)
         Localization.language = language
         AlarmSound.name = alarmSound
+        AlarmSound.volume = Float(soundVolume)
+    }
+
+    /// 지우기 전에 확인을 켜 두었으면 묻는다. 지워도 되면 true.
+    func confirmRemoval(count: Int) -> Bool {
+        guard confirmDelete else { return true }
+        let alert = NSAlert()
+        alert.messageText = count == 1 ? L("지울까요?") : L("%d개를 지울까요?", count)
+        alert.informativeText = L("지운 뒤에도 ⌘Z로 되살릴 수 있습니다.")
+        alert.addButton(withTitle: L("삭제"))
+        alert.addButton(withTitle: L("취소"))
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func setLaunchAtLogin(_ isOn: Bool) {
@@ -95,12 +137,14 @@ enum AlarmSound {
     static let choices = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse",
                           "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
     static var name = defaultName
+    static var volume: Float = 1
     /// 앞 소리가 끝나기 전에 다시 내려면 같은 객체를 멈췄다 다시 틀어야 한다.
     private static var current: NSSound?
 
     static func play() {
         current?.stop()
         current = NSSound(named: name)
+        current?.volume = volume
         current?.play()
     }
 
@@ -193,6 +237,70 @@ enum Localization {
         "%d시간": "%dh",
         "%d분": "%dm",
         "%d초": "%ds",
+        // 설정 창
+        "Clocky 설정": "Clocky Settings",
+        "설정…": "Settings…",
+        "일반": "General",
+        "타이머·알람": "Timers & Alarms",
+        "소리": "Sound",
+        "단축키": "Shortcuts",
+        "삭제하기 전에 확인": "Confirm before deleting",
+        "메뉴바": "Menu Bar",
+        "타이머 남은 시간 표시": "Show timer countdown",
+        "1시간 안에 울릴 알람까지 남은 시간 표시": "Show countdown to alarms within an hour",
+        "미리 깜빡이기": "Flash before ringing",
+        "깜빡이지 않음": "Don't flash",
+        "%d초 전부터": "%d seconds before",
+        "다시 울림 간격": "Snooze length",
+        "소리를 되풀이하는 시간": "Keep ringing for",
+        "소리가 멈춘 뒤에도 끌 때까지 창은 깜빡입니다.": "The window keeps flashing until you stop it, even after the sound ends.",
+        "소리 크기": "Volume",
+        "들어 보기": "Preview",
+        "Mac의 소리를 꺼 두면 알람도 들리지 않습니다.": "If your Mac is muted, alarms are silent too.",
+        "시계 창": "Clock Window",
+        "어디서나": "Anywhere",
+        "스페이스": "Space",
+        "고른 타이머 시작·일시정지, 고른 알람 켜기·끄기": "Start or pause the timer, turn the alarm on or off",
+        "목록에서 고르기": "Select in the list",
+        "타이머 또는 알람 추가": "Add a timer or alarm",
+        "고른 항목 지우기": "Delete the selected item",
+        "지운 항목 되살리기, 다시 지우기": "Undo or redo a delete",
+        "타이머, 알람": "Timers, alarms",
+        "울림 끄기, 이름 편집 끝내기": "Stop ringing, finish editing a name",
+        "울리는 동안 다시 울림": "Snooze while ringing",
+        "지울까요?": "Delete this item?",
+        "%d개를 지울까요?": "Delete %d items?",
+        "지운 뒤에도 ⌘Z로 되살릴 수 있습니다.": "You can bring it back with ⌘Z.",
+        // 전체 목록
+        "전체 목록": "All Timers & Alarms",
+        "전체 목록…": "All Timers & Alarms…",
+        "전체": "All",
+        "보기": "Show",
+        "이름 검색": "Search names",
+        "알람 정렬": "Sort alarms",
+        "다음 울림 순": "Next to ring",
+        "시각 순": "Time",
+        "이름 순": "Name",
+        "추가한 순": "Date added",
+        "추가": "Add",
+        "새 타이머": "New Timer",
+        "새 알람": "New Alarm",
+        "찾는 항목이 없습니다": "No matches",
+        "왼쪽에서 타이머나 알람을 고르세요": "Select a timer or alarm on the left",
+        "시계 창에서 보기": "Show in Clock Window",
+        "복제": "Duplicate",
+        "끄기": "Off",
+        "남은 시간": "Time left",
+        "상태": "Status",
+        "시간": "Duration",
+        "시각": "Time",
+        "다음 울림": "Next",
+        "요일 지정": "Custom",
+        "%@ %@ · %@ 남음": "%@ %@ · in %@",
+        "분, 분:초, 또는 시:분:초로 입력하고 Return을 누릅니다. 시간을 바꾸면 처음부터 다시 셉니다.": "Enter minutes, m:ss, or h:mm:ss and press Return. Changing the duration starts the count over.",
+        "%d개 선택됨": "%d selected",
+        "알람 모두 켜기": "Turn All Alarms On",
+        "알람 모두 끄기": "Turn All Alarms Off",
         // 편집 메뉴
         "편집": "Edit",
         "실행 취소": "Undo",

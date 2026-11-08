@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-final class ClockStoreWindowController: NSObject, NSWindowDelegate {
+final class TimerWindowController: NSObject, NSWindowDelegate {
     static let contentSize = NSSize(width: 340, height: 420)
 
     let store = ClockStore()
@@ -10,6 +10,7 @@ final class ClockStoreWindowController: NSObject, NSWindowDelegate {
     private(set) lazy var panel: TimerPanel = makePanel()
     private var isLoaded = false
     private var pinSubscription: AnyCancellable?
+    private var settingSubscriptions: Set<AnyCancellable> = []
     /// 창 왼쪽 아래 모서리. 닫았다 열어도, 앱을 다시 켜도 옮겨 둔 자리에 뜬다.
     private static let originKey = "windowOrigin"
     /// 지운 타이머·알람을 ⌘Z로 되살린다.
@@ -20,6 +21,11 @@ final class ClockStoreWindowController: NSObject, NSWindowDelegate {
         super.init()
         store.onRing = { [weak self] in self?.show() }
         store.undoManager = undoManager
+        // 설정 창에서 바꾼 값을 바로 반영한다.
+        settings.$warningSeconds.sink { [weak self] in self?.store.warningSeconds = $0 }.store(in: &settingSubscriptions)
+        settings.$snoozeMinutes.sink { [weak self] in self?.store.snoozeMinutes = $0 }.store(in: &settingSubscriptions)
+        settings.$soundLimitSeconds.sink { [weak self] in self?.store.soundLimit = TimeInterval($0) }.store(in: &settingSubscriptions)
+        settings.$menuBarShowsAlarm.sink { [weak self] in self?.store.tracksMenuBarAlarm = $0 }.store(in: &settingSubscriptions)
         // 타이머를 띄워 둔 모니터를 빼면 남은 화면으로 옮긴다.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -62,6 +68,9 @@ final class ClockStoreWindowController: NSObject, NSWindowDelegate {
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
         undoManager
     }
+
+    /// 목록 창도 같은 되돌리기 기록을 쓴다.
+    var sharedUndoManager: UndoManager { undoManager }
 
     /// 창의 윗부분이 어느 화면에도 충분히 걸쳐 있지 않으면 기본 자리로 옮긴다.
     func ensureOnScreen() {
@@ -106,6 +115,7 @@ final class ClockStoreWindowController: NSObject, NSWindowDelegate {
         panel.contentView = hosting
         panel.setFrame(NSRect(origin: .zero, size: Self.contentSize), display: false)
         panel.store = store
+        panel.settings = settings
         panel.delegate = self
         pinSubscription = store.$isPinned.sink { [weak panel] pinned in
             panel?.level = pinned ? .floating : .normal
@@ -124,6 +134,10 @@ final class ClockStoreWindowController: NSObject, NSWindowDelegate {
 
 final class TimerPanel: NSPanel {
     weak var store: ClockStore?
+    weak var settings: ClockySettings?
+    /// 설정 창과 목록 창을 연다. 메뉴바 메뉴와 같은 단축키(⌘,·⌘L)를 이 창에서도 쓴다.
+    var onOpenSettings: (() -> Void)?
+    var onOpenList: (() -> Void)?
     /// 다시 울림 버튼의 자리. 창 왼쪽 위가 원점이다.
     var snoozeFrame: CGRect = .zero
     override var canBecomeKey: Bool { true }
@@ -166,7 +180,8 @@ final class TimerPanel: NSPanel {
         case (Key.space, []): store.toggleSelected()
         case (Key.up, _) where !flags.contains(.command): store.selectAdjacent(-1)
         case (Key.down, _) where !flags.contains(.command): store.selectAdjacent(1)
-        case (Key.delete, .command), (Key.forwardDelete, _): store.removeSelected()
+        case (Key.delete, .command), (Key.forwardDelete, _):
+            if settings?.confirmRemoval(count: 1) ?? true { store.removeSelected() }
         case (Key.escape, []): makeFirstResponder(nil)
         default: super.keyDown(with: event)
         }
@@ -180,6 +195,8 @@ final class TimerPanel: NSPanel {
             case "n": store.addItem(); return true
             case "1": store.mode = .timer; return true
             case "2": store.mode = .alarm; return true
+            case ",": onOpenSettings?(); return true
+            case "l": onOpenList?(); return true
             default: break
             }
         }

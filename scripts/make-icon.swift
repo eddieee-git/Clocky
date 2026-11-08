@@ -1,7 +1,8 @@
-// Clocky 앱 아이콘을 그려 Resources/AppIcon.icns와 docs/images/icon.png를 만든다.
+// Clocky 앱 아이콘(자명종)을 그려 Resources/AppIcon.icns와 docs/images/icon.png를 만든다.
 // 실행: swift scripts/make-icon.swift
 import AppKit
 
+/// 종 두 개와 다리가 달린 자명종. 바늘은 시계 광고처럼 10시 10분을 가리킨다.
 func draw(in size: CGFloat) {
     let scale = size / 1024
     let context = NSGraphicsContext.current!.cgContext
@@ -12,42 +13,82 @@ func draw(in size: CGFloat) {
     NSGradient(starting: NSColor(srgbRed: 0.98, green: 0.55, blue: 0.30, alpha: 1),
                ending: NSColor(srgbRed: 0.93, green: 0.30, blue: 0.36, alpha: 1))!.draw(in: tile, angle: -60)
 
-    // 숫자판 두 장
-    let cardSize = NSSize(width: 300, height: 400)
-    let gap: CGFloat = 36
-    let originY: CGFloat = 512 - cardSize.height / 2
-    let digits = ["1", "2"]
-    for (i, digit) in digits.enumerated() {
-        let x = 512 - gap / 2 - cardSize.width + CGFloat(i) * (cardSize.width + gap)
-        let card = NSBezierPath(roundedRect: NSRect(origin: NSPoint(x: x, y: originY), size: cardSize), xRadius: 44, yRadius: 44)
-
-        context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -24 * scale), blur: 50 * scale,
-                          color: NSColor.black.withAlphaComponent(0.35).cgColor)
-        NSColor(white: 0.12, alpha: 1).setFill()
-        card.fill()
-        context.restoreGState()
-
-        // 위쪽 반은 조금 밝게 해서 판이 두 장 겹친 느낌을 낸다.
-        context.saveGState()
-        card.addClip()
-        NSColor(white: 0.17, alpha: 1).setFill()
-        NSRect(x: x, y: 512, width: cardSize.width, height: cardSize.height / 2).fill()
-        context.restoreGState()
-
-        let font = NSFont.systemFont(ofSize: 330, weight: .bold)
-        let rounded = font.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 330) } ?? font
-        let text = NSAttributedString(string: digit, attributes: [.font: rounded, .foregroundColor: NSColor(white: 0.96, alpha: 1)])
-        let bounds = text.size()
-        text.draw(at: NSPoint(x: x + (cardSize.width - bounds.width) / 2, y: 512 - bounds.height / 2 + 6))
-
-        // 판이 접히는 가운데 틈과 양옆의 경첩
-        NSColor(white: 0.05, alpha: 1).setFill()
-        NSRect(x: x, y: 506, width: cardSize.width, height: 12).fill()
-        NSColor(white: 0.35, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: x - 10, y: 494, width: 22, height: 36), xRadius: 6, yRadius: 6).fill()
-        NSBezierPath(roundedRect: NSRect(x: x + cardSize.width - 12, y: 494, width: 22, height: 36), xRadius: 6, yRadius: 6).fill()
+    let center = NSPoint(x: 512, y: 470)
+    let dark = NSColor(white: 0.13, alpha: 1)
+    func circle(_ c: NSPoint, _ r: CGFloat) -> NSBezierPath {
+        NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
     }
+    func point(_ angle: CGFloat, _ radius: CGFloat) -> NSPoint {
+        // 0도가 12시, 시계 방향
+        let radians = (90 - angle) * .pi / 180
+        return NSPoint(x: center.x + cos(radians) * radius, y: center.y + sin(radians) * radius)
+    }
+
+    context.saveGState()
+    context.setShadow(offset: CGSize(width: 0, height: -20 * scale), blur: 46 * scale,
+                      color: NSColor.black.withAlphaComponent(0.32).cgColor)
+    context.beginTransparencyLayer(auxiliaryInfo: nil)
+
+    // 다리
+    dark.setStroke()
+    for side in [-1.0, 1.0] as [CGFloat] {
+        let leg = NSBezierPath()
+        leg.lineWidth = 46
+        leg.lineCapStyle = .round
+        leg.move(to: NSPoint(x: center.x + side * 150, y: center.y - 230))
+        leg.line(to: NSPoint(x: center.x + side * 215, y: 205))
+        leg.stroke()
+    }
+    // 종을 치는 손잡이
+    let stem = NSBezierPath()
+    stem.lineWidth = 30
+    stem.lineCapStyle = .round
+    stem.move(to: NSPoint(x: center.x, y: center.y + 280))
+    stem.line(to: NSPoint(x: center.x, y: center.y + 345))
+    stem.stroke()
+    dark.setFill()
+    circle(NSPoint(x: center.x, y: center.y + 352), 30).fill()
+    // 종 두 개: 몸통 뒤에서 위쪽 바깥으로 비져 나온 반구
+    for angle in [-42.0, 42.0] as [CGFloat] {
+        let c = point(angle, 270)
+        circle(c, 118).fill()
+    }
+    // 몸통 테두리와 판
+    circle(center, 300).fill()
+    NSColor(srgbRed: 0.99, green: 0.97, blue: 0.93, alpha: 1).setFill()
+    circle(center, 252).fill()
+
+    context.endTransparencyLayer()
+    context.restoreGState()
+
+    // 눈금: 3·6·9·12는 길게
+    for i in 0..<12 {
+        let major = i % 3 == 0
+        let tick = NSBezierPath()
+        tick.lineWidth = major ? 22 : 12
+        tick.lineCapStyle = .round
+        tick.move(to: point(CGFloat(i) * 30, major ? 196 : 210))
+        tick.line(to: point(CGFloat(i) * 30, 228))
+        NSColor(white: 0.13, alpha: major ? 1 : 0.55).setStroke()
+        tick.stroke()
+    }
+    // 바늘: 10시 10분
+    func hand(_ angle: CGFloat, length: CGFloat, width: CGFloat, color: NSColor) {
+        let path = NSBezierPath()
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.move(to: point(angle + 180, length * 0.14))
+        path.line(to: point(angle, length))
+        color.setStroke()
+        path.stroke()
+    }
+    hand(305, length: 132, width: 30, color: dark)
+    hand(60, length: 186, width: 22, color: dark)
+    hand(160, length: 196, width: 9, color: NSColor(srgbRed: 0.93, green: 0.32, blue: 0.30, alpha: 1))
+    dark.setFill()
+    circle(center, 26).fill()
+    NSColor(srgbRed: 0.93, green: 0.32, blue: 0.30, alpha: 1).setFill()
+    circle(center, 11).fill()
 }
 
 func png(_ size: Int) -> Data {

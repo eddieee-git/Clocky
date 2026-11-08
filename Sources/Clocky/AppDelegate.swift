@@ -3,7 +3,13 @@ import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings = ClockySettings()
-    private(set) lazy var window = ClockStoreWindowController(settings: settings)
+    private(set) lazy var window = TimerWindowController(settings: settings)
+    private(set) lazy var settingsWindow = SettingsWindowController(settings: settings)
+    private(set) lazy var listWindow: ListWindowController = {
+        let model = ClockListModel(store: window.store, settings: settings)
+        model.onReveal = { [weak self] id in self?.reveal(id) }
+        return ListWindowController(model: model, undoManager: window.sharedUndoManager)
+    }()
     private(set) var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
     /// 메뉴를 열 때마다 새로 만드는 타이머·알람 상태 줄.
@@ -20,10 +26,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.imagePosition = .imageLeading
         statusItem = item
         rebuildStatusMenu()
+        window.panel.onOpenSettings = { [weak self] in self?.showSettings() }
+        window.panel.onOpenList = { [weak self] in self?.showList() }
 
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
         window.store.$now.combineLatest(window.store.$timers, window.store.$alarms)
             .sink { [weak self] _, _, _ in self?.updateStatusTitle() }
+            .store(in: &subscriptions)
+        // 설정에서 메뉴바 표시를 바꾸면 바로 고친다.
+        settings.objectWillChange
+            .sink { [weak self] in DispatchQueue.main.async { self?.updateStatusTitle() } }
             .store(in: &subscriptions)
         NotificationCenter.default.addObserver(forName: Localization.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.rebuildStatusMenu()
@@ -59,13 +71,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 도는 타이머가 없으면 1시간 안에 울릴 알람까지 남은 시간을 알람 시계 모양과 함께 보여 준다.
         // 그것도 없으면 일시정지한 타이머를 보여 준다.
         var showsAlarm = false
-        if let active {
+        if let active, settings.menuBarShowsTimer {
             title = " " + clockText(active.remaining(at: now))
-        } else if let soonest = store.upcomingAlarms.first?.upcoming,
+        } else if active == nil || !settings.menuBarShowsTimer, settings.menuBarShowsAlarm,
+                  let soonest = store.upcomingAlarms.first?.upcoming,
                   case let left = soonest.timeIntervalSince(now), left > 0 && left <= ClockStore.menuBarAlarmWindow {
             title = " " + clockText(Int(ceil(left - 0.001)))
             showsAlarm = true
-        } else if let paused {
+        } else if let paused, settings.menuBarShowsTimer {
             title = " " + clockText(paused.remaining(at: now))
         }
         if showsAlarm != showingAlarmIcon, let button = statusItem?.button {
@@ -84,23 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: L("Clocky 열기"), action: #selector(showWindow), keyEquivalent: "").target = self
         statusLineItems = []
         menu.addItem(.separator())
-
-        let languageMenu = NSMenu()
-        for language in AppLanguage.allCases {
-            let item = languageMenu.addItem(withTitle: language.title, action: #selector(chooseLanguage(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = language.rawValue
-            item.state = settings.language == language ? .on : .off
-        }
-        menu.addItem(withTitle: L("언어"), action: nil, keyEquivalent: "").submenu = languageMenu
-
-        let soundMenu = NSMenu()
-        soundMenu.delegate = self
-        menu.addItem(withTitle: L("알람 소리"), action: nil, keyEquivalent: "").submenu = soundMenu
-
-        let login = menu.addItem(withTitle: L("로그인 시 자동 실행"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.target = self
-        login.isEnabled = settings.canLaunchAtLogin
+        menu.addItem(withTitle: L("전체 목록…"), action: #selector(showList), keyEquivalent: "l").target = self
+        menu.addItem(withTitle: L("설정…"), action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: L("Clocky 종료"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.delegate = self
@@ -109,18 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        if menu === statusMenu {
-            updateStatusLines(in: menu)
-            menu.items.first { $0.action == #selector(toggleLaunchAtLogin) }?.state = settings.launchAtLogin ? .on : .off
-            return
-        }
-        // 알람 소리 하위 메뉴
-        menu.removeAllItems()
-        for name in AlarmSound.choices {
-            let item = menu.addItem(withTitle: name, action: #selector(chooseSound(_:)), keyEquivalent: "")
-            item.target = self
-            item.state = settings.alarmSound == name ? .on : .off
-        }
+        updateStatusLines(in: menu)
     }
 
     /// "Clocky 열기" 바로 아래에 도는·멈춘 타이머와 켜 둔 알람을 한 줄씩 넣는다. 누르면 그 항목을 창에 띄운다.
@@ -156,36 +143,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.show()
     }
 
-    @objc private func showItem(_ sender: NSMenuItem) {
+    @objc func showSettings() {
+        settingsWindow.show()
+    }
+
+    @objc func showList() {
+        listWindow.show()
+    }
+
+    /// 목록에서 고른 항목을 시계 창에 띄운다.
+    func reveal(_ id: UUID) {
         let store = window.store
-        if let key = sender.representedObject as? String {
-            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2, let id = UUID(uuidString: parts[1]) {
-                if parts[0] == "timer", store.timers.contains(where: { $0.id == id }) {
-                    store.selectedTimerID = id
-                    store.mode = .timer
-                } else if parts[0] == "alarm", store.alarms.contains(where: { $0.id == id }) {
-                    store.selectedAlarmID = id
-                    store.mode = .alarm
-                }
-            }
+        if store.timers.contains(where: { $0.id == id }) {
+            store.selectedTimerID = id
+            store.mode = .timer
+        } else if store.alarms.contains(where: { $0.id == id }) {
+            store.selectedAlarmID = id
+            store.mode = .alarm
         }
         window.show()
     }
 
-    @objc private func chooseLanguage(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let language = AppLanguage(rawValue: raw) else { return }
-        settings.language = language
-    }
-
-    /// 고르면 바로 들려준다.
-    @objc private func chooseSound(_ sender: NSMenuItem) {
-        settings.alarmSound = sender.title
-        AlarmSound.play()
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        settings.setLaunchAtLogin(!settings.launchAtLogin)
+    @objc private func showItem(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String,
+              let id = key.split(separator: ":").last.flatMap({ UUID(uuidString: String($0)) }) else { return window.show() }
+        reveal(id)
     }
 
     /// 메뉴바 전용 앱이라 보이지 않지만, 이름 칸에서 ⌘C·⌘V·⌘Z가 동작하려면 주 메뉴가 있어야 한다.
@@ -193,6 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let main = NSMenu()
         let appItem = main.addItem(withTitle: "Clocky", action: nil, keyEquivalent: "")
         let appMenu = NSMenu()
+        appMenu.addItem(withTitle: L("설정…"), action: #selector(showSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(withTitle: L("전체 목록…"), action: #selector(showList), keyEquivalent: "l").target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L("Clocky 종료"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 

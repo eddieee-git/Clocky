@@ -107,7 +107,7 @@ struct FlipTimerView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 // 울리는 동안 창의 다른 곳을 누르면 꺼지지만, 이 버튼은 눌린다.
-                Button(L("%d분 뒤 다시 울림", ClockStore.snoozeMinutes)) { store.snooze() }
+                Button(L("%d분 뒤 다시 울림", store.snoozeMinutes)) { store.snooze() }
                     .controlSize(.small)
                     .help(L("S 키로도 됩니다"))
                     .background(GeometryReader { geometry in
@@ -264,7 +264,7 @@ struct FlipTimerView: View {
     }
 
     private func timerRow(_ item: TimerItem) -> some View {
-        let warning = item.isWarning(at: store.now) || item.phase == .ringing
+        let warning = item.isWarning(at: store.now, within: store.warningSeconds) || item.phase == .ringing
         return row(selected: item.id == store.selectedTimerID, select: { store.selectedTimerID = item.id }) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(store.displayName(of: item))
@@ -294,7 +294,7 @@ struct FlipTimerView: View {
                 }
             }
             .frame(width: 18)
-            Button { store.removeTimer(item.id) } label: { Image(systemName: "xmark") }
+            Button { if settings.confirmRemoval(count: 1) { store.removeTimer(item.id) } } label: { Image(systemName: "xmark") }
                 .help(L("삭제 (⌘Z로 되돌리기)"))
                 .accessibilityLabel(L("%@ 삭제", store.displayName(of: item)))
                 .disabled(store.timers.count <= 1)
@@ -303,7 +303,7 @@ struct FlipTimerView: View {
     }
 
     private func alarmRow(_ item: AlarmItem) -> some View {
-        let warning = item.isWarning(at: store.now) || store.ringingAlarmIDs.contains(item.id)
+        let warning = item.isWarning(at: store.now, within: store.warningSeconds) || store.ringingAlarmIDs.contains(item.id)
         return row(selected: item.id == store.selectedAlarmID, select: { store.selectedAlarmID = item.id }) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(store.displayName(of: item))
@@ -326,31 +326,16 @@ struct FlipTimerView: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .accessibilityLabel(L("%@ 켜기", store.displayName(of: item)))
-            Button { store.removeAlarm(item.id) } label: { Image(systemName: "xmark") }
+            Button { if settings.confirmRemoval(count: 1) { store.removeAlarm(item.id) } } label: { Image(systemName: "xmark") }
                 .help(L("삭제 (⌘Z로 되돌리기)"))
                 .accessibilityLabel(L("%@ 삭제", store.displayName(of: item)))
                 .frame(width: 18)
         }
     }
 
-    /// "매일 · 3시간 2분 남음", "한 번 · 45분 남음", "꺼짐".
+    /// "매일 · 3시간 2분 남음", "한 번 · 45분 남음", "울림".
     private func alarmRowStatus(_ item: AlarmItem) -> String {
-        if store.ringingAlarmIDs.contains(item.id) { return L("울림") }
-        if let snooze = item.snoozeUntil, item.upcoming == snooze {
-            return L("%@ · %@ 남음", L("다시 울림"), remainingText(until: snooze, from: store.now))
-        }
-        let repeats = daysText(item.days)
-        guard let next = item.next else { return L("%@ · 꺼짐", repeats) }
-        return L("%@ · %@ 남음", repeats, remainingText(until: next, from: store.now))
-    }
-
-    private func phaseText(_ phase: TimerItem.Phase) -> String {
-        switch phase {
-        case .idle: return L("대기")
-        case .running: return L("진행 중")
-        case .paused: return L("일시정지됨")
-        case .ringing: return L("울림")
-        }
+        store.ringingAlarmIDs.contains(item.id) ? L("울림") : alarmSummary(item, now: store.now)
     }
 
     private func row<Content: View>(selected: Bool, select: @escaping () -> Void,
