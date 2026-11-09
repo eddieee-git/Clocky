@@ -92,6 +92,8 @@ final class ClockListModel: ObservableObject {
     @Published var selection = Set<UUID>()
     /// 시계 창에 그 항목을 띄운다.
     var onReveal: (UUID) -> Void = { _ in }
+    /// 설정의 캘린더 탭을 연다.
+    var onOpenCalendarSettings: () -> Void = {}
 
     init(store: ClockStore, settings: ClockySettings) {
         self.store = store
@@ -301,12 +303,17 @@ private struct ClockListSidebar: View {
             .onDeleteCommand { model.remove(model.selection) }
             .overlay {
                 if timers.isEmpty && alarms.isEmpty && events.isEmpty {
-                    Text(!model.query.isEmpty ? L("찾는 항목이 없습니다")
-                         : model.filter == .calendar ? (settings.calendarFeeds.isEmpty ? L("설정 → 캘린더에서 구글 캘린더를 연결하세요") : L("이틀 안에 일정이 없습니다"))
-                         : L("등록된 알람이 없습니다"))
-                        .multilineTextAlignment(.center)
-                        .padding()
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: 10) {
+                        Text(!model.query.isEmpty ? L("찾는 항목이 없습니다")
+                             : model.filter == .calendar ? (settings.calendarFeeds.isEmpty ? L("설정 → 캘린더에서 구글 캘린더를 연결하세요") : L("이틀 안에 일정이 없습니다"))
+                             : L("등록된 알람이 없습니다"))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        if model.query.isEmpty && model.filter == .calendar && settings.calendarFeeds.isEmpty {
+                            Button(L("캘린더 연결…")) { model.onOpenCalendarSettings() }
+                        }
+                    }
+                    .padding()
                 }
             }
         }

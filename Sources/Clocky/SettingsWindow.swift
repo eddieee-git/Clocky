@@ -8,6 +8,8 @@ final class SettingsWindowController {
     private let calendar: CalendarSync
     private var window: NSWindow?
     private var levelObservers: [NSObjectProtocol] = []
+    /// 어느 탭을 보여 줄지. 다른 창에서 특정 탭을 바로 열 때 바꾼다.
+    private let navigation = SettingsNavigation()
 
     init(settings: ClockySettings, calendar: CalendarSync) {
         self.settings = settings
@@ -19,14 +21,16 @@ final class SettingsWindowController {
 
     var isVisible: Bool { window?.isVisible == true }
 
-    func show() {
+    /// `tab`을 주면 그 탭으로 연다. 없으면 마지막으로 보던 탭.
+    func show(tab: SettingsView.Tab? = nil) {
+        if let tab { navigation.tab = tab }
         if window == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = L("Clocky 설정")
             w.isReleasedWhenClosed = false
             levelObservers = floatWhileActive(w)
-            w.contentView = NSHostingView(rootView: SettingsView(settings: settings, calendar: calendar))
+            w.contentView = NSHostingView(rootView: SettingsView(settings: settings, calendar: calendar, navigation: navigation))
             w.center()
             window = w
         }
@@ -51,6 +55,14 @@ func floatWhileActive(_ window: NSWindow) -> [NSObjectProtocol] {
     ]
 }
 
+final class SettingsNavigation: ObservableObject {
+    @Published var tab: SettingsView.Tab
+
+    init(tab: SettingsView.Tab = .general) {
+        self.tab = tab
+    }
+}
+
 struct SettingsView: View {
     enum Tab: String, CaseIterable {
         case general = "일반"
@@ -62,11 +74,21 @@ struct SettingsView: View {
 
     @ObservedObject var settings: ClockySettings
     @ObservedObject var calendar: CalendarSync
-    @State var tab: Tab = .general
+    @ObservedObject var navigation: SettingsNavigation
+
+    init(settings: ClockySettings, calendar: CalendarSync, navigation: SettingsNavigation) {
+        self.settings = settings
+        self.calendar = calendar
+        self.navigation = navigation
+    }
+
+    init(settings: ClockySettings, calendar: CalendarSync, tab: Tab) {
+        self.init(settings: settings, calendar: calendar, navigation: SettingsNavigation(tab: tab))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L("설정"), selection: $tab) {
+            Picker(L("설정"), selection: $navigation.tab) {
                 ForEach(Tab.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -76,7 +98,7 @@ struct SettingsView: View {
             .id(settings.language)
             .padding(.top, 12)
 
-            switch tab {
+            switch navigation.tab {
             case .general: general
             case .clock: clock
             case .sound: sound
@@ -381,8 +403,6 @@ private struct HotKeyEditor: View {
 private struct CalendarSettings: View {
     @ObservedObject var settings: ClockySettings
     @ObservedObject var sync: CalendarSync
-    @State private var newURL = ""
-    @State private var message: String?
 
     var body: some View {
         Form {
@@ -390,14 +410,14 @@ private struct CalendarSettings: View {
                 ForEach(settings.calendarFeeds) { feed in
                     feedRow(feed)
                 }
-                HStack {
-                    TextField(L("비공개 주소(iCal 형식) 붙여 넣기"), text: $newURL)
-                        .onSubmit(add)
-                    Button(L("추가"), action: add)
-                        .disabled(newURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                if settings.calendarFeeds.isEmpty {
+                    Text(L("연결한 캘린더가 없습니다"))
+                        .foregroundStyle(.secondary)
                 }
-                if let message {
-                    Text(message).font(.caption).foregroundStyle(.red)
+                HStack {
+                    Spacer()
+                    // 주소는 길어서 줄 안의 칸보다 따로 뜨는 창에서 넣는 편이 보기 쉽다.
+                    Button(L("캘린더 추가…")) { CalendarAddPrompt.run(sync: sync) }
                 }
             } header: {
                 Text(L("구글 캘린더"))
@@ -476,17 +496,50 @@ private struct CalendarSettings: View {
         return L("마지막으로 받은 시각 %@", settings.timeText(last))
     }
 
-    private func add() {
-        switch sync.add(newURL) {
+}
+
+/// "캘린더 추가…"를 누르면 뜨는 창. 클립보드에 iCal 주소가 있으면 미리 채운다.
+/// 주소가 틀렸으면 이유를 보여 주고 고칠 수 있게 다시 띄운다.
+enum CalendarAddPrompt {
+    static func run(sync: CalendarSync, initial: String? = nil, problem: String? = nil) {
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        field.placeholderString = "https://calendar.google.com/calendar/ical/…/basic.ics"
+        field.stringValue = initial ?? clipboardAddress() ?? ""
+        field.lineBreakMode = .byTruncatingMiddle
+
+        let alert = NSAlert()
+        alert.messageText = L("캘린더 추가")
+        var info = L("구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합에서 \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다.")
+        info += "\n\n" + L("회사·학교 계정은 관리자가 비공개 주소를 막아 두어 이 항목이 없을 수 있습니다.")
+        if let problem { info = problem + "\n\n" + info }
+        alert.informativeText = info
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("추가"))
+        alert.addButton(withTitle: L("취소"))
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let text = field.stringValue
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        switch sync.add(text) {
         case nil:
-            newURL = ""
-            message = nil
+            break
         case .invalid?:
-            message = L("주소가 올바르지 않습니다.")
+            run(sync: sync, initial: text, problem: L("주소가 올바르지 않습니다."))
         case .notSecure?:
-            message = L("https:// 또는 webcal:// 로 시작하는 주소만 넣을 수 있습니다.")
+            run(sync: sync, initial: text, problem: L("https:// 또는 webcal:// 로 시작하는 주소만 넣을 수 있습니다."))
         case .duplicate?:
-            message = L("이미 넣은 주소입니다.")
+            run(sync: sync, initial: text, problem: L("이미 넣은 주소입니다."))
         }
+    }
+
+    /// 클립보드에 iCal 주소처럼 보이는 글이 있으면.
+    static func clipboardAddress() -> String? {
+        guard let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.count < 2000, !text.contains("\n") else { return nil }
+        let lower = text.lowercased()
+        guard lower.hasPrefix("https://") || lower.hasPrefix("webcal://") else { return nil }
+        return lower.contains("ical") || lower.hasSuffix(".ics") ? text : nil
     }
 }

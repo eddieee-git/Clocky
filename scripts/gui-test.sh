@@ -16,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 sed '/testTarget/d' Package.swift > "$work/Package.swift"
 
 scenarios=("$@")
-(( ${#scenarios} )) || scenarios=(basics restore keyboard windows calendar)
+(( ${#scenarios} )) || scenarios=(basics restore keyboard windows calendar calendar-add)
 failed=0
 for name in $scenarios; do
     rm -f "$work"/Sources/Clocky/*.swift(N)

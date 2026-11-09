@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private(set) lazy var listWindow: ListWindowController = {
         let model = ClockListModel(store: window.store, settings: settings)
         model.onReveal = { [weak self] id in self?.reveal(id) }
+        model.onOpenCalendarSettings = { [weak self] in self?.showCalendarSettings() }
         return ListWindowController(model: model, undoManager: window.sharedUndoManager)
     }()
     private(set) var statusItem: NSStatusItem?
@@ -185,6 +186,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func showSettings() {
         settingsWindow.show()
+    }
+
+    /// 설정의 캘린더 탭을 바로 연다.
+    func showCalendarSettings() {
+        settingsWindow.show(tab: .calendar)
     }
 
     @objc func showList() {
