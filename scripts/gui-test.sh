@@ -16,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 sed '/testTarget/d' Package.swift > "$work/Package.swift"
 
 scenarios=("$@")
-(( ${#scenarios} )) || scenarios=(basics restore keyboard windows)
+(( ${#scenarios} )) || scenarios=(basics restore keyboard windows calendar)
 failed=0
 for name in $scenarios; do
     rm -f "$work"/Sources/Clocky/*.swift(N)
@@ -26,7 +26,7 @@ for name in $scenarios; do
     cp "Tests/GUI/$name.swift" "$work/Sources/Clocky/main.swift"
     (cd "$work" && swift build 2>&1 | grep -E "error|warning" || true)
     langs=(ko)
-    [[ $name == readme-shots || $name == windows ]] && langs=(${=CLOCKY_LANGS:-ko en})
+    [[ $name == readme-shots || $name == windows || $name == calendar ]] && langs=(${=CLOCKY_LANGS:-ko en})
     for lang in $langs; do
         echo "== $name ($lang)"
         home=$(mktemp -d)

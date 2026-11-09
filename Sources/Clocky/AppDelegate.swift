@@ -4,7 +4,8 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings = ClockySettings()
     private(set) lazy var window = TimerWindowController(settings: settings)
-    private(set) lazy var settingsWindow = SettingsWindowController(settings: settings)
+    private(set) lazy var calendarSync = CalendarSync(settings: settings, store: window.store)
+    private(set) lazy var settingsWindow = SettingsWindowController(settings: settings, calendar: calendarSync)
     private(set) lazy var listWindow: ListWindowController = {
         let model = ClockListModel(store: window.store, settings: settings)
         model.onReveal = { [weak self] id in self?.reveal(id) }
@@ -28,11 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
         rebuildStatusMenu()
         window.panel.onOpenSettings = { [weak self] in self?.showSettings() }
+        _ = calendarSync
         window.panel.onOpenList = { [weak self] in self?.showList() }
 
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
-        window.store.$now.combineLatest(window.store.$timers, window.store.$alarms)
-            .sink { [weak self] _, _, _ in self?.updateStatusTitle() }
+        window.store.$now.combineLatest(window.store.$timers, window.store.$alarms, window.store.$calendarEvents)
+            .sink { [weak self] _, _, _, _ in self?.updateStatusTitle() }
             .store(in: &subscriptions)
         // 단축키를 새로 누르는 동안에는 모두 풀어 둔다.
         settings.$hotKeys.combineLatest(settings.$isRecordingHotKey)
@@ -79,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let active, settings.menuBarShowsTimer {
             title = " " + clockText(active.remaining(at: now))
         } else if active == nil || !settings.menuBarShowsTimer, settings.menuBarShowsAlarm,
-                  let soonest = store.upcomingAlarms.first?.upcoming,
+                  let soonest = store.nextAlert?.date,
                   case let left = soonest.timeIntervalSince(now), left > 0 && left <= ClockStore.menuBarAlarmWindow {
             title = " " + clockText(Int(ceil(left - 0.001)))
             showsAlarm = true
@@ -134,6 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let next = item.upcoming else { continue }
             lines.append((L("%@ · %@ (%@ 남음)", store.displayName(of: item), settings.timeText(next),
                             remainingText(until: next, from: now)), "alarm:\(item.id)"))
+        }
+        // 하루 안의 일정은 다섯 개까지.
+        for (event, alert) in store.pendingEventAlerts.filter({ $0.date > now && $0.date < now.addingTimeInterval(86400) }).prefix(5) {
+            lines.append((L("📅 %@ · %@ 시작 (알림까지 %@)", event.title, settings.timeText(event.start),
+                            remainingText(until: alert, from: now)), "event:\(event.listID)"))
         }
         for (index, line) in lines.enumerated() {
             let item = NSMenuItem(title: line.0, action: #selector(showItem(_:)), keyEquivalent: "")
@@ -200,6 +207,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showItem(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String,
               let id = key.split(separator: ":").last.flatMap({ UUID(uuidString: String($0)) }) else { return window.show() }
+        // 일정은 목록 창에서 자세히 본다.
+        if key.hasPrefix("event:") {
+            showList()
+            listWindow.model.filter = .calendar
+            listWindow.model.selection = [id]
+            return
+        }
         reveal(id)
     }
 

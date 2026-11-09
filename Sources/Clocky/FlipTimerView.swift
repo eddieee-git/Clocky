@@ -134,16 +134,22 @@ struct FlipTimerView: View {
     private var controls: some View {
         if store.isRinging {
             VStack(spacing: 6) {
-                Text(L("창을 누르거나 Esc로 끄기"))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                // 울리는 동안 창의 다른 곳을 누르면 꺼지지만, 이 버튼은 눌린다.
-                Button(L("%d분 뒤 다시 울림", store.snoozeMinutes)) { store.snooze() }
-                    .controlSize(.small)
-                    .help(L("S 키로도 됩니다"))
-                    .background(GeometryReader { geometry in
-                        Color.clear.preference(key: SnoozeFrameKey.self, value: geometry.frame(in: .global))
-                    })
+                // 무엇이 울리는지(타이머·알람·일정 이름)를 먼저 보여 준다.
+                Text(store.ringingTitles.joined(separator: ", "))
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    // 울리는 동안 창의 다른 곳을 누르면 꺼지지만, 이 버튼은 눌린다.
+                    Button(L("%d분 뒤 다시 울림", store.snoozeMinutes)) { store.snooze() }
+                        .controlSize(.small)
+                        .help(L("S 키로도 됩니다"))
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: SnoozeFrameKey.self, value: geometry.frame(in: .global))
+                        })
+                    Text(L("창을 누르거나 Esc로 끄기"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
         } else if store.mode == .timer {
             timerControls(store.selectedTimer)
@@ -284,13 +290,24 @@ struct FlipTimerView: View {
                     LazyVStack(spacing: 2) {
                         if store.mode == .timer {
                             ForEach(store.timers) { timerRow($0).id($0.id) }
-                        } else if store.alarms.isEmpty {
-                            Text(L("등록된 알람이 없습니다"))
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 20)
                         } else {
+                            if store.alarms.isEmpty && todayEvents.isEmpty {
+                                Text(L("등록된 알람이 없습니다"))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 20)
+                            }
                             ForEach(store.alarms) { alarmRow($0).id($0.id) }
+                            if !todayEvents.isEmpty {
+                                HStack {
+                                    Text(L("캘린더 일정"))
+                                    Spacer()
+                                }
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 6)
+                                ForEach(todayEvents) { eventRow($0) }
+                            }
                         }
                     }
                 }
@@ -370,6 +387,49 @@ struct FlipTimerView: View {
                 .accessibilityLabel(L("%@ 삭제", store.displayName(of: item)))
                 .frame(width: 18)
         }
+    }
+
+    /// 하루 안에 시작하는 일정, 다섯 개까지.
+    private var todayEvents: [CalendarEvent] {
+        let now = store.now
+        return Array(store.calendarEvents.filter { $0.end > now && $0.start < now.addingTimeInterval(86400) }.prefix(5))
+    }
+
+    private func eventRow(_ event: CalendarEvent) -> some View {
+        let skipped = store.skippedEventIDs.contains(event.id)
+        let ringing = store.ringingEventIDs.contains(event.id)
+        let warning = ringing || (!skipped && {
+            let left = store.alertDate(of: event).timeIntervalSince(store.now)
+            return left > 0 && left <= TimeInterval(store.warningSeconds)
+        }())
+        return HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .foregroundStyle(skipped ? Color.secondary : Color.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text(eventSummary(event, store: store, settings: settings))
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(warning ? Color.red : Color.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Text(settings.timeText(event.start))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(skipped ? Color.secondary : (warning ? Color.red : Color.primary))
+            Button { store.setEventSkipped(event.id, !skipped) } label: { Image(systemName: skipped ? "bell.slash" : "bell") }
+                .buttonStyle(.borderless)
+                .help(skipped ? L("이번 알림 켜기") : L("이번 알림 끄기"))
+                .accessibilityLabel(skipped ? L("%@ 알림 켜기", event.title) : L("%@ 알림 끄기", event.title))
+                .frame(width: 18)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .accessibilityElement(children: .contain)
     }
 
     /// "매일 · 3시간 2분 남음", "한 번 · 45분 남음", "울림".

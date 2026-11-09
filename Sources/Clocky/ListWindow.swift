@@ -73,6 +73,7 @@ enum ListFilter: String, CaseIterable {
     case all = "전체"
     case timers = "타이머"
     case alarms = "알람"
+    case calendar = "캘린더"
 }
 
 enum AlarmSort: String, CaseIterable {
@@ -103,12 +104,21 @@ final class ClockListModel: ObservableObject {
     }
 
     var timers: [TimerItem] {
-        guard filter != .alarms else { return [] }
+        guard filter == .all || filter == .timers else { return [] }
         return store.timers.filter { matches(store.displayName(of: $0)) }
     }
 
+    /// 캘린더에서 받아 온 앞으로 이틀 안의 일정. 이미 시작한 것은 뺀다.
+    var events: [CalendarEvent] {
+        guard filter == .all || filter == .calendar else { return [] }
+        let now = store.now
+        return store.calendarEvents.filter { $0.end > now && matches($0.title) }
+    }
+
+    func event(_ id: UUID) -> CalendarEvent? { store.calendarEvents.first { $0.listID == id } }
+
     var alarms: [AlarmItem] {
-        guard filter != .timers else { return [] }
+        guard filter == .all || filter == .alarms else { return [] }
         let found = store.alarms.filter { matches(store.displayName(of: $0)) }
         switch sort {
         case .added: return found
@@ -131,14 +141,14 @@ final class ClockListModel: ObservableObject {
     func alarm(_ id: UUID) -> AlarmItem? { store.alarms.first { $0.id == id } }
 
     func addTimer() {
-        if filter == .alarms { filter = .all }
+        if filter != .timers { filter = .all }
         let id = store.addTimer()
         query = ""
         selection = [id]
     }
 
     func addAlarm() {
-        if filter == .timers { filter = .all }
+        if filter != .alarms { filter = .all }
         let id = store.addAlarm()
         query = ""
         selection = [id]
@@ -184,11 +194,9 @@ struct ClockListView: View {
 
     /// 울리는 동안 이 창에서도 끄거나 다시 울림을 고를 수 있게 한다.
     private var ringingBar: some View {
-        let names = store.timers.filter { $0.phase == .ringing }.map { store.displayName(of: $0) }
-            + store.alarms.filter { store.ringingAlarmIDs.contains($0.id) }.map { store.displayName(of: $0) }
-        return HStack(spacing: 10) {
+        HStack(spacing: 10) {
             Image(systemName: "bell.and.waves.left.and.right.fill")
-            Text(L("울리는 중: %@", names.joined(separator: ", ")))
+            Text(L("울리는 중: %@", store.ringingTitles.joined(separator: ", ")))
                 .lineLimit(1)
             Spacer()
             Button(L("%d분 뒤 다시 울림", store.snoozeMinutes)) { store.snooze() }
@@ -202,9 +210,11 @@ struct ClockListView: View {
 
     @ViewBuilder
     private var detail: some View {
-        let selected = model.selection.filter { model.timer($0) != nil || model.alarm($0) != nil }
+        let selected = model.selection.filter { model.timer($0) != nil || model.alarm($0) != nil || model.event($0) != nil }
         if selected.count == 1, let id = selected.first {
-            if let item = model.timer(id) {
+            if let event = model.event(id) {
+                EventDetail(store: store, settings: settings, event: event).id(id)
+            } else if let item = model.timer(id) {
                 TimerDetail(model: model, store: store, item: item).id(id)
             } else if let item = model.alarm(id) {
                 AlarmDetail(model: model, store: store, settings: settings, item: item).id(id)
@@ -263,6 +273,7 @@ private struct ClockListSidebar: View {
 
             let timers = model.timers
             let alarms = model.alarms
+            let events = model.events
             List(selection: $model.selection) {
                 if !timers.isEmpty {
                     Section(L("타이머")) {
@@ -274,18 +285,27 @@ private struct ClockListSidebar: View {
                         ForEach(alarms) { AlarmListRow(store: store, settings: settings, item: $0).tag($0.id) }
                     }
                 }
+                if !events.isEmpty {
+                    Section(L("캘린더 일정")) {
+                        ForEach(events) { EventListRow(store: store, settings: settings, event: $0).tag($0.listID) }
+                    }
+                }
             }
             // 보기나 검색어가 바뀌면 줄을 하나씩 고치지 않고 목록을 새로 만든다.
             .id("\(model.filter.rawValue)|\(model.query)|\(model.sort.rawValue)")
             .contextMenu(forSelectionType: UUID.self) { ids in
                 menuItems(for: ids)
             } primaryAction: { ids in
-                ids.first.map(model.onReveal)
+                if let id = ids.first, model.event(id) == nil { model.onReveal(id) }
             }
             .onDeleteCommand { model.remove(model.selection) }
             .overlay {
-                if timers.isEmpty && alarms.isEmpty {
-                    Text(model.query.isEmpty ? L("등록된 알람이 없습니다") : L("찾는 항목이 없습니다"))
+                if timers.isEmpty && alarms.isEmpty && events.isEmpty {
+                    Text(!model.query.isEmpty ? L("찾는 항목이 없습니다")
+                         : model.filter == .calendar ? (settings.calendarFeeds.isEmpty ? L("설정 → 캘린더에서 구글 캘린더를 연결하세요") : L("이틀 안에 일정이 없습니다"))
+                         : L("등록된 알람이 없습니다"))
+                        .multilineTextAlignment(.center)
+                        .padding()
                         .foregroundStyle(.secondary)
                 }
             }
@@ -295,7 +315,11 @@ private struct ClockListSidebar: View {
 
     @ViewBuilder
     private func menuItems(for ids: Set<UUID>) -> some View {
-        if !ids.isEmpty {
+        let events = ids.compactMap(model.event)
+        if !events.isEmpty {
+            Button(L("이번 알림 끄기")) { events.forEach { store.setEventSkipped($0.id, true) } }
+            Button(L("이번 알림 켜기")) { events.forEach { store.setEventSkipped($0.id, false) } }
+        } else if !ids.isEmpty {
             if ids.count == 1, let id = ids.first {
                 Button(L("시계 창에서 보기")) { model.onReveal(id) }
                 if let timer = model.timer(id) {
@@ -336,6 +360,85 @@ private struct TimerListRow: View {
                 .foregroundStyle(item.phase == .idle ? .secondary : .primary)
         }
         .padding(.vertical, 2)
+    }
+}
+
+private struct EventListRow: View {
+    @ObservedObject var store: ClockStore
+    @ObservedObject var settings: ClockySettings
+    let event: CalendarEvent
+
+    var body: some View {
+        let skipped = store.skippedEventIDs.contains(event.id)
+        HStack(spacing: 8) {
+            Image(systemName: skipped ? "bell.slash" : "calendar")
+                .foregroundStyle(skipped ? Color.secondary : Color.accentColor)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title).lineLimit(1)
+                Text(eventSummary(event, store: store, settings: settings))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Text(settings.timeText(event.start))
+                .monospacedDigit()
+                .foregroundStyle(skipped ? .secondary : .primary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// "업무 · 내일 · 5분 전 알림", "업무 · 알림 끔", "업무 · 울림".
+func eventSummary(_ event: CalendarEvent, store: ClockStore, settings: ClockySettings) -> String {
+    let day = settings.dayText(event.start)
+    if store.ringingEventIDs.contains(event.id) { return L("%@ · 울림", event.calendarName) }
+    if store.skippedEventIDs.contains(event.id) { return L("%@ · %@ · 알림 끔", event.calendarName, day) }
+    let alert = store.alertDate(of: event)
+    if alert <= store.now { return L("%@ · %@ · 알림 지남", event.calendarName, day) }
+    return L("%@ · %@ · 알림까지 %@", event.calendarName, day, remainingText(until: alert, from: store.now))
+}
+
+private struct EventDetail: View {
+    @ObservedObject var store: ClockStore
+    @ObservedObject var settings: ClockySettings
+    let event: CalendarEvent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(event.title)
+                .font(.title3.weight(.semibold))
+                .textSelection(.enabled)
+                .padding([.horizontal, .top], 16)
+            Form {
+                Section {
+                    LabeledContent(L("캘린더"), value: event.calendarName)
+                    LabeledContent(L("일시"), value: whenText)
+                    LabeledContent(L("알림"), value: alertText)
+                    Toggle(L("이번 일정 알림"), isOn: Binding(get: { !store.skippedEventIDs.contains(event.id) },
+                                                         set: { store.setEventSkipped(event.id, !$0) }))
+                } footer: {
+                    Text(L("일정은 구글 캘린더에서 고칩니다. 알림 시점은 설정 → 캘린더에서 바꿉니다."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    /// "오늘 오후 1:06 ~ 오후 2:00". 끝 시각이 없으면 시작만.
+    private var whenText: String {
+        let start = "\(settings.dayText(event.start)) \(settings.timeText(event.start))"
+        return event.end > event.start ? "\(start) ~ \(settings.timeText(event.end))" : start
+    }
+
+    private var alertText: String {
+        if store.skippedEventIDs.contains(event.id) { return L("끔") }
+        let alert = store.alertDate(of: event)
+        let time = settings.timeText(alert)
+        return alert > store.now ? L("%@ · %@ 남음", time, remainingText(until: alert, from: store.now)) : L("%@ · 지남", time)
     }
 }
 

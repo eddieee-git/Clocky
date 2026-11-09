@@ -28,11 +28,14 @@ final class ClockySettings: ObservableObject {
         static let warning = "warningSeconds", snooze = "snoozeMinutes", soundLimit = "soundLimitSeconds"
         static let menuBarTimer = "menuBarShowsTimer", menuBarAlarm = "menuBarShowsAlarm", confirmDelete = "confirmDelete"
         static let presets = "timerPresets", hotKeys = "hotKeys"
+        static let calendarFeeds = "calendarFeeds", calendarLead = "calendarLeadMinutes"
+        static let calendarAllDay = "calendarIncludeAllDay", calendarDeclined = "calendarIncludeDeclined"
     }
     static let warningChoices = [0, 5, 10, 30, 60]
     static let snoozeChoices = [1, 3, 5, 10, 15, 30]
     static let soundLimitChoices = [10, 30, 60, 180, 300]
     static let defaultPresets = [1, 3, 5, 10, 25]
+    static let calendarLeadChoices = [0, 1, 5, 10, 15, 30]
     /// 시계 창 한 줄에 들어가는 만큼.
     static let maxPresets = 6
     private let defaults = UserDefaults.standard
@@ -72,6 +75,14 @@ final class ClockySettings: ObservableObject {
     @Published var hotKeys: [String: KeyCombo] {
         didSet { defaults.set(try? JSONEncoder().encode(hotKeys), forKey: Keys.hotKeys) }
     }
+    /// 구글 캘린더 등의 iCal 주소. 비밀 토큰이 들어 있어 화면에는 가려서 보여 준다.
+    @Published var calendarFeeds: [CalendarFeed] {
+        didSet { defaults.set(try? JSONEncoder().encode(calendarFeeds), forKey: Keys.calendarFeeds) }
+    }
+    /// 일정 시작 몇 분 전에 울릴지. 0이면 시작할 때.
+    @Published var calendarLeadMinutes: Int { didSet { defaults.set(calendarLeadMinutes, forKey: Keys.calendarLead) } }
+    @Published var calendarIncludeAllDay: Bool { didSet { defaults.set(calendarIncludeAllDay, forKey: Keys.calendarAllDay) } }
+    @Published var calendarIncludeDeclined: Bool { didSet { defaults.set(calendarIncludeDeclined, forKey: Keys.calendarDeclined) } }
     /// 다른 앱이 이미 쓰는 등의 이유로 등록하지 못한 단축키.
     @Published var failedHotKeys: Set<HotKeyAction> = []
     /// 단축키를 새로 누르는 동안에는 등록을 풀어 둔다. 그래야 지금 단축키도 다시 고를 수 있다.
@@ -94,6 +105,12 @@ final class ClockySettings: ObservableObject {
         menuBarShowsAlarm = defaults.object(forKey: Keys.menuBarAlarm) as? Bool ?? true
         confirmDelete = defaults.bool(forKey: Keys.confirmDelete)
         timerPresets = (defaults.array(forKey: Keys.presets) as? [Int]).flatMap { Self.validPresets($0) } ?? Self.defaultPresets
+        calendarFeeds = defaults.data(forKey: Keys.calendarFeeds)
+            .flatMap { try? JSONDecoder().decode([CalendarFeed].self, from: $0) } ?? []
+        calendarLeadMinutes = (defaults.object(forKey: Keys.calendarLead) as? Int)
+            .flatMap { Self.calendarLeadChoices.contains($0) ? $0 : nil } ?? 5
+        calendarIncludeAllDay = defaults.bool(forKey: Keys.calendarAllDay)
+        calendarIncludeDeclined = defaults.bool(forKey: Keys.calendarDeclined)
         hotKeys = defaults.data(forKey: Keys.hotKeys).flatMap { try? JSONDecoder().decode([String: KeyCombo].self, from: $0) }
             ?? KeyCombo.defaults
         Localization.language = language
@@ -416,6 +433,47 @@ enum Localization {
         "Esc를 누르면 입력을 취소합니다.": "Press Esc to cancel.",
         "⌘, ⌃, ⌥ 중 하나와 함께 누르세요.": "Include ⌘, ⌃, or ⌥.",
         "%@에서 쓰는 단축키입니다.": "Already used for %@.",
+        // 캘린더
+        "캘린더": "Calendar",
+        "캘린더 일정": "Calendar Events",
+        "일시": "When",
+        "구글 캘린더": "Google Calendar",
+        "비공개 주소(iCal 형식) 붙여 넣기": "Paste secret address in iCal format",
+        "구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합 → \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다. 이 주소를 아는 사람은 일정을 볼 수 있으니 다른 곳에 올리지 마세요.": "In Google Calendar on the web, open Settings → pick a calendar on the left → Integrate calendar → copy \"Secret address in iCal format\" and paste it here. Anyone with this address can see your events, so don't share it.",
+        "알림": "Alert",
+        "일정 시작할 때": "At start time",
+        "%d분 전": "%d min before",
+        "종일 일정에도 알림": "Alert for all-day events",
+        "거절한 일정에도 알림": "Alert for declined events",
+        "지금 새로 받기": "Refresh Now",
+        "15분마다, 그리고 Mac이 깨어날 때 새로 받습니다. Mac을 쓰는 동안(Clocky가 켜져 있고 잠자기 중이 아닐 때) 울립니다.": "Clocky refreshes every 15 minutes and when your Mac wakes. Alerts ring while you're using your Mac (Clocky running, not asleep).",
+        "%@ · 이틀 안 일정 %d개": "%@ · %d events in the next 2 days",
+        "이 캘린더 빼기": "Remove This Calendar",
+        "%@ 빼기": "Remove %@",
+        "아직 받지 않았습니다": "Not refreshed yet",
+        "마지막으로 받은 시각 %@": "Last refreshed %@",
+        "주소가 올바르지 않습니다.": "This address isn't valid.",
+        "https:// 또는 webcal:// 로 시작하는 주소만 넣을 수 있습니다.": "Only addresses starting with https:// or webcal:// are allowed.",
+        "이미 넣은 주소입니다.": "This address is already added.",
+        "주소를 찾을 수 없습니다. 비공개 주소를 다시 복사해 주세요.": "Address not found. Copy the secret address again.",
+        "서버 응답 %d": "Server returned %d",
+        "iCal 형식이 아닙니다.": "Not in iCal format.",
+        "(제목 없음)": "(No title)",
+        "설정 → 캘린더에서 구글 캘린더를 연결하세요": "Connect Google Calendar in Settings → Calendar",
+        "이틀 안에 일정이 없습니다": "No events in the next 2 days",
+        "이번 알림 끄기": "Skip This Alert",
+        "이번 알림 켜기": "Turn This Alert Back On",
+        "%@ 알림 끄기": "Skip alert for %@",
+        "%@ 알림 켜기": "Turn on alert for %@",
+        "이번 일정 알림": "Alert for this event",
+        "끔": "Off",
+        "%@ · 지남": "%@ · passed",
+        "%@ · 울림": "%@ · Ringing",
+        "%@ · %@ · 알림 끔": "%@ · %@ · alert off",
+        "%@ · %@ · 알림 지남": "%@ · %@ · alert passed",
+        "%@ · %@ · 알림까지 %@": "%@ · %@ · alert in %@",
+        "📅 %@ · %@ 시작 (알림까지 %@)": "📅 %@ · starts %@ (alert in %@)",
+        "일정은 구글 캘린더에서 고칩니다. 알림 시점은 설정 → 캘린더에서 바꿉니다.": "Edit events in Google Calendar. Change when alerts ring in Settings → Calendar.",
         // 편집 메뉴
         "편집": "Edit",
         "실행 취소": "Undo",

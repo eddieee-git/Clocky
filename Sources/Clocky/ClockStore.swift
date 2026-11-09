@@ -130,6 +130,7 @@ final class ClockStore: ObservableObject {
 
     private enum Keys {
         static let mode = "timerMode", pinned = "timerPinned", timers = "timers", alarms = "alarms"
+        static let eventsFired = "calendarFired", eventsSkipped = "calendarSkipped", eventSnoozes = "calendarSnoozes"
         // 타이머·알람이 하나씩이던 때의 값. 처음 실행할 때 첫 항목으로 옮기고 지운다.
         static let name = "timerName", duration = "timerDuration"
         static let alarmName = "alarmName", alarmMinutes = "alarmMinutes"
@@ -199,6 +200,20 @@ final class ClockStore: ObservableObject {
     @Published var selectedAlarmID: UUID?
     @Published private(set) var ringingAlarmIDs: Set<UUID> = []
 
+    // MARK: 캘린더 일정
+    /// 앞으로 이틀 안의 일정. 캘린더 동기화가 넣어 준다.
+    @Published private(set) var calendarEvents: [CalendarEvent] = []
+    @Published private(set) var ringingEventIDs: Set<String> = []
+    /// 이번 한 번은 울리지 않게 한 일정.
+    @Published private(set) var skippedEventIDs: Set<String> = [] { didSet { setNeedsSave() } }
+    @Published private(set) var eventSnoozes: [String: Date] = [:] { didSet { setNeedsSave() } }
+    /// 이미 울린 일정. 앱을 다시 켜도 또 울리지 않게 저장한다.
+    private var firedEventIDs: Set<String> = [] { didSet { setNeedsSave() } }
+    /// 일정 시작 몇 초 전에 울릴지.
+    var calendarLead: TimeInterval = 300 { didSet { scheduleTick() } }
+    /// 잠자기 등으로 늦게 확인했을 때 일정 알람은 이 안이면 늦게라도 울린다.
+    static let eventLateLimit: TimeInterval = 15 * 60
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         mode = defaults.string(forKey: Keys.mode).flatMap(Mode.init) ?? .timer
@@ -255,6 +270,9 @@ final class ClockStore: ObservableObject {
                 defaults.removeObject(forKey: key)
             }
         }
+        firedEventIDs = Set(defaults.stringArray(forKey: Keys.eventsFired) ?? [])
+        skippedEventIDs = Set(defaults.stringArray(forKey: Keys.eventsSkipped) ?? [])
+        eventSnoozes = (defaults.dictionary(forKey: Keys.eventSnoozes) as? [String: Date]) ?? [:]
         observeClock()
         scheduleTick()
     }
@@ -339,6 +357,9 @@ final class ClockStore: ObservableObject {
         }
         if let data = try? JSONEncoder().encode(savedTimers) { defaults.set(data, forKey: Keys.timers) }
         if let data = try? JSONEncoder().encode(savedAlarms) { defaults.set(data, forKey: Keys.alarms) }
+        defaults.set(firedEventIDs.sorted(), forKey: Keys.eventsFired)
+        defaults.set(skippedEventIDs.sorted(), forKey: Keys.eventsSkipped)
+        defaults.set(eventSnoozes, forKey: Keys.eventSnoozes)
     }
 
     /// 시간대·시계·날짜가 바뀌면 알람의 다음 시각을 다시 셈한다. 잠자기에서 깨면 바로 확인한다.
@@ -401,12 +422,16 @@ final class ClockStore: ObservableObject {
     var selectedTimer: TimerItem { timers.first { $0.id == selectedTimerID } ?? timers[0] }
     var selectedAlarm: AlarmItem? { alarms.first { $0.id == selectedAlarmID } }
 
-    var isRinging: Bool { timers.contains { $0.phase == .ringing } || !ringingAlarmIDs.isEmpty }
+    var isRinging: Bool { timers.contains { $0.phase == .ringing } || !ringingAlarmIDs.isEmpty || !ringingEventIDs.isEmpty }
 
     /// 어느 타이머나 알람이 10초 안으로 다가왔을 때.
     var isWarning: Bool {
         timers.contains { $0.isWarning(at: now, within: warningSeconds) }
             || alarms.contains { $0.isWarning(at: now, within: warningSeconds) }
+            || pendingEventAlerts.contains {
+                let left = $0.date.timeIntervalSince(now)
+                return left > 0 && left <= TimeInterval(warningSeconds)
+            }
     }
 
     /// 끝나기 직전과 울리는 동안 0.5초마다 켜졌다 꺼진다.
@@ -429,6 +454,62 @@ final class ClockStore: ObservableObject {
     /// 앞으로 울릴 알람(다시 알림 포함), 이른 것부터.
     var upcomingAlarms: [AlarmItem] {
         alarms.filter { $0.upcoming != nil }.sorted { $0.upcoming! < $1.upcoming! }
+    }
+
+    /// 일정이 울릴 때. 다시 울림을 걸어 두었으면 그때.
+    func alertDate(of event: CalendarEvent) -> Date {
+        eventSnoozes[event.id] ?? event.start.addingTimeInterval(-calendarLead)
+    }
+
+    /// 아직 울리지 않았고 건너뛰지도 않은 일정과 그 알림 시각, 이른 것부터.
+    var pendingEventAlerts: [(event: CalendarEvent, date: Date)] {
+        calendarEvents.compactMap { event -> (CalendarEvent, Date)? in
+            if skippedEventIDs.contains(event.id) { return nil }
+            if let snooze = eventSnoozes[event.id] { return (event, snooze) }
+            if firedEventIDs.contains(event.id) { return nil }
+            return (event, event.start.addingTimeInterval(-calendarLead))
+        }
+        .sorted { $0.1 < $1.1 }
+        .map { (event: $0.0, date: $0.1) }
+    }
+
+    /// 다음에 울릴 것(알람이나 일정)의 이름과 시각. 메뉴바에 쓴다.
+    var nextAlert: (title: String, date: Date)? {
+        let alarm = upcomingAlarms.first.flatMap { item in item.upcoming.map { (displayName(of: item), $0) } }
+        let event = pendingEventAlerts.first { $0.date > now.addingTimeInterval(-1) }.map { ($0.event.title, $0.date) }
+        switch (alarm, event) {
+        case let (a?, e?): return a.1 <= e.1 ? (a.0, a.1) : (e.0, e.1)
+        case let (a?, nil): return (a.0, a.1)
+        case let (nil, e?): return (e.0, e.1)
+        case (nil, nil): return nil
+        }
+    }
+
+    /// 지금 울리는 것들의 이름. 시계 창과 목록 창에 보여 준다.
+    var ringingTitles: [String] {
+        timers.filter { $0.phase == .ringing }.map { displayName(of: $0) }
+            + alarms.filter { ringingAlarmIDs.contains($0.id) }.map { displayName(of: $0) }
+            + calendarEvents.filter { ringingEventIDs.contains($0.id) }.map(\.title)
+    }
+
+    func setCalendarEvents(_ events: [CalendarEvent]) {
+        if events != calendarEvents { calendarEvents = events }
+        // 오래된 기록은 지운다. 일정 id 끝에 시작 시각(초)이 있다.
+        let cutoff = Date().addingTimeInterval(-3 * 86400).timeIntervalSince1970
+        func recent(_ id: String) -> Bool { (id.split(separator: "|").last.flatMap { Double($0) } ?? 0) > cutoff }
+        let fired = firedEventIDs.filter(recent)
+        if fired != firedEventIDs { firedEventIDs = fired }
+        let skipped = skippedEventIDs.filter(recent)
+        if skipped != skippedEventIDs { skippedEventIDs = skipped }
+        let snoozes = eventSnoozes.filter { recent($0.key) }
+        if snoozes != eventSnoozes { eventSnoozes = snoozes }
+        scheduleTick()
+    }
+
+    /// 이번 한 번만 이 일정을 울리지 않거나 다시 울리게 한다.
+    func setEventSkipped(_ id: String, _ skipped: Bool) {
+        if skipped { skippedEventIDs.insert(id) } else { skippedEventIDs.remove(id) }
+        if skipped { eventSnoozes[id] = nil }
     }
 
     func displayName(of item: TimerItem) -> String {
@@ -669,6 +750,7 @@ final class ClockStore: ObservableObject {
             timers = timers.map { var t = $0; if t.phase == .ringing { t.phase = .idle }; return t }
         }
         ringingAlarmIDs = []
+        ringingEventIDs = []
         stopSound()
         now = Date()
         scheduleTick()
@@ -692,7 +774,9 @@ final class ClockStore: ObservableObject {
                 return a
             }
         }
+        for id in ringingEventIDs { eventSnoozes[id] = until }
         ringingAlarmIDs = []
+        ringingEventIDs = []
         stopSound()
         now = date
         scheduleTick()
@@ -713,6 +797,19 @@ final class ClockStore: ObservableObject {
             let left = end.timeIntervalSince(now)
             // 남은 초가 하나 줄어드는 순간.
             dates.append(left <= 0 ? now : end.addingTimeInterval(-(ceil(left) - 1)))
+        }
+        if let alert = pendingEventAlerts.first(where: { $0.date > now })?.date ?? pendingEventAlerts.first?.date {
+            dates.append(max(alert, now))
+            let warning = TimeInterval(warningSeconds)
+            if warning > 0 && alert.timeIntervalSince(now) > warning { dates.append(alert.addingTimeInterval(-warning)) }
+            if tracksMenuBarAlarm {
+                let left = alert.timeIntervalSince(now)
+                if left <= Self.menuBarAlarmWindow {
+                    dates.append(nextSecond)
+                } else {
+                    dates.append(alert.addingTimeInterval(-Self.menuBarAlarmWindow))
+                }
+            }
         }
         if let soonest = upcomingAlarms.first?.upcoming {
             let left = soonest.timeIntervalSince(now)
@@ -793,6 +890,18 @@ final class ClockStore: ObservableObject {
         if newRinging != ringingAlarmIDs { ringingAlarmIDs = newRinging }
         if newAlarms != alarms { alarms = newAlarms }
 
+        var rangEvent: String?
+        for (event, date) in pendingEventAlerts where now >= date {
+            eventSnoozes[event.id] = nil
+            firedEventIDs.insert(event.id)
+            // 잠자기 등으로 많이 늦었으면 울리지 않는다.
+            if now.timeIntervalSince(date) < Self.eventLateLimit {
+                ringingEventIDs.insert(event.id)
+                rangEvent = rangEvent ?? event.id
+            }
+        }
+        if rangEvent != nil && rangAlarm == nil { mode = .alarm }
+
         // 울린 것을 큰 판에 보여 준다. 타이머와 알람이 함께 울리면 타이머를 먼저 보여 준다.
         if let rangAlarm {
             selectedAlarmID = rangAlarm
@@ -802,7 +911,7 @@ final class ClockStore: ObservableObject {
             selectedTimerID = rangTimer
             mode = .timer
         }
-        if rangTimer != nil || rangAlarm != nil { ring() }
+        if rangTimer != nil || rangAlarm != nil || rangEvent != nil { ring() }
         scheduleTick()
     }
 
@@ -851,6 +960,10 @@ final class ClockStore: ObservableObject {
     func forceSnooze(_ id: UUID, _ date: Date) {
         guard let index = alarms.firstIndex(where: { $0.id == id }) else { return }
         alarms[index].snoozeUntil = date
+    }
+
+    func forceEventSnooze(_ id: String, _ date: Date) {
+        eventSnoozes[id] = date
     }
 
     func forceTimerEnd(_ id: UUID, _ date: Date) {

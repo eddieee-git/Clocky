@@ -5,6 +5,9 @@
 	<!-- 앱 샌드박스: 자기 컨테이너 밖의 파일과 네트워크에 손대지 못한다. -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- 설정에 넣은 iCal 주소에서 일정을 받아 온다. 다른 곳으로는 아무것도 보내지 않는다. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 	<!-- 설정에서 사용자가 직접 고른 소리 파일만 읽는다. -->
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>

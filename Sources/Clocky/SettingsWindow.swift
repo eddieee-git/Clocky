@@ -5,11 +5,13 @@ import UniformTypeIdentifiers
 /// Clocky 설정 창. 값은 바뀌는 즉시 저장되고 반영된다.
 final class SettingsWindowController {
     private let settings: ClockySettings
+    private let calendar: CalendarSync
     private var window: NSWindow?
     private var levelObservers: [NSObjectProtocol] = []
 
-    init(settings: ClockySettings) {
+    init(settings: ClockySettings, calendar: CalendarSync) {
         self.settings = settings
+        self.calendar = calendar
         NotificationCenter.default.addObserver(forName: Localization.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.window?.title = L("Clocky 설정")
         }
@@ -19,12 +21,12 @@ final class SettingsWindowController {
 
     func show() {
         if window == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 400),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = L("Clocky 설정")
             w.isReleasedWhenClosed = false
             levelObservers = floatWhileActive(w)
-            w.contentView = NSHostingView(rootView: SettingsView(settings: settings))
+            w.contentView = NSHostingView(rootView: SettingsView(settings: settings, calendar: calendar))
             w.center()
             window = w
         }
@@ -54,10 +56,12 @@ struct SettingsView: View {
         case general = "일반"
         case clock = "타이머·알람"
         case sound = "소리"
+        case calendar = "캘린더"
         case shortcuts = "단축키"
     }
 
     @ObservedObject var settings: ClockySettings
+    @ObservedObject var calendar: CalendarSync
     @State var tab: Tab = .general
 
     var body: some View {
@@ -76,10 +80,11 @@ struct SettingsView: View {
             case .general: general
             case .clock: clock
             case .sound: sound
+            case .calendar: CalendarSettings(settings: settings, sync: calendar)
             case .shortcuts: shortcuts
             }
         }
-        .frame(width: 480, height: 400, alignment: .top)
+        .frame(width: 520, height: 480, alignment: .top)
     }
 
     private var general: some View {
@@ -369,5 +374,119 @@ private struct HotKeyEditor: View {
         }
         settings.hotKeys[action.rawValue] = combo
         stop()
+    }
+}
+
+/// 구글 캘린더 비공개 iCal 주소를 넣고, 언제 울릴지와 어떤 일정을 뺄지 정한다.
+private struct CalendarSettings: View {
+    @ObservedObject var settings: ClockySettings
+    @ObservedObject var sync: CalendarSync
+    @State private var newURL = ""
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(settings.calendarFeeds) { feed in
+                    feedRow(feed)
+                }
+                HStack {
+                    TextField(L("비공개 주소(iCal 형식) 붙여 넣기"), text: $newURL)
+                        .onSubmit(add)
+                    Button(L("추가"), action: add)
+                        .disabled(newURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let message {
+                    Text(message).font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text(L("구글 캘린더"))
+            } footer: {
+                Text(L("구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합 → \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다. 이 주소를 아는 사람은 일정을 볼 수 있으니 다른 곳에 올리지 마세요."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker(L("알림"), selection: $settings.calendarLeadMinutes) {
+                    ForEach(ClockySettings.calendarLeadChoices, id: \.self) {
+                        Text($0 == 0 ? L("일정 시작할 때") : L("%d분 전", $0)).tag($0)
+                    }
+                }
+                Toggle(L("종일 일정에도 알림"), isOn: $settings.calendarIncludeAllDay)
+                Toggle(L("거절한 일정에도 알림"), isOn: $settings.calendarIncludeDeclined)
+                HStack {
+                    Text(lastRefreshText).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if sync.isRefreshing { ProgressView().controlSize(.small) }
+                    Button(L("지금 새로 받기")) { sync.refresh() }
+                        .disabled(sync.isRefreshing || !settings.calendarFeeds.contains(where: \.enabled))
+                }
+            } footer: {
+                Text(L("15분마다, 그리고 Mac이 깨어날 때 새로 받습니다. Mac을 쓰는 동안(Clocky가 켜져 있고 잠자기 중이 아닐 때) 울립니다."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func feedRow(_ feed: CalendarFeed) -> some View {
+        let status = sync.statuses[feed.id]
+        return HStack(spacing: 10) {
+            Toggle("", isOn: Binding(get: { settings.calendarFeeds.first { $0.id == feed.id }?.enabled ?? false },
+                                     set: { value in
+                                         if let i = settings.calendarFeeds.firstIndex(where: { $0.id == feed.id }) {
+                                             settings.calendarFeeds[i].enabled = value
+                                         }
+                                     }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityLabel(L("%@ 켜기", sync.title(of: feed)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sync.title(of: feed)).lineLimit(1)
+                Group {
+                    if let error = status?.error {
+                        Text(error).foregroundStyle(.red)
+                    } else if status?.lastSuccess != nil {
+                        Text(L("%@ · 이틀 안 일정 %d개", feed.maskedURL, status?.eventCount ?? 0))
+                    } else {
+                        Text(feed.maskedURL)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                sync.remove(feed.id)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .help(L("이 캘린더 빼기"))
+            .accessibilityLabel(L("%@ 빼기", sync.title(of: feed)))
+        }
+    }
+
+    private var lastRefreshText: String {
+        let dates = settings.calendarFeeds.compactMap { sync.statuses[$0.id]?.lastSuccess }
+        guard let last = dates.max() else { return L("아직 받지 않았습니다") }
+        return L("마지막으로 받은 시각 %@", settings.timeText(last))
+    }
+
+    private func add() {
+        switch sync.add(newURL) {
+        case nil:
+            newURL = ""
+            message = nil
+        case .invalid?:
+            message = L("주소가 올바르지 않습니다.")
+        case .notSecure?:
+            message = L("https:// 또는 webcal:// 로 시작하는 주소만 넣을 수 있습니다.")
+        case .duplicate?:
+            message = L("이미 넣은 주소입니다.")
+        }
     }
 }
