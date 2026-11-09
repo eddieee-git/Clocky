@@ -266,6 +266,86 @@ private func encode<T: Encodable>(_ value: T) -> Data { try! JSONEncoder().encod
         #expect(!store.isWarning)
     }
 
+    @Test func 아주_큰_숫자는_받지_않는다() {
+        #expect(ClockStore.parse("9223372036854775807") == nil)
+        #expect(ClockStore.parse("99999999999:0:0") == nil)
+        #expect(ClockStore.parse("6000") == nil)
+        #expect(ClockStore.parse("5999") == 5999 * 60)
+        #expect(ClockStore.parse("99:59:59") == ClockStore.maxDuration)
+    }
+
+    @Test func 꺼진_동안_지난_알람은_1시간_안이면_울린다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let recent = Date().addingTimeInterval(-60)
+        let old = Date().addingTimeInterval(-7200)
+        defaults.set(encode([
+            ClockStore.SavedAlarm(id: UUID(), name: "방금", minutes: 60, enabled: true, number: 1, days: [], next: recent),
+            ClockStore.SavedAlarm(id: UUID(), name: "오래됨", minutes: 60, enabled: true, number: 2, days: [1, 2, 3, 4, 5, 6, 7], next: old),
+        ]), forKey: "alarms")
+        let store = ClockStore(defaults: defaults)
+        #expect(store.alarms[0].next == recent)
+        #expect((store.alarms[1].next ?? .distantPast) > Date())
+        store.tick()
+        #expect(store.ringingAlarmIDs == [store.alarms[0].id])
+        #expect(!store.alarms[0].enabled)
+        store.stopRinging()
+    }
+
+    @Test func 읽지_못한_저장값은_따로_남긴다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let garbage = Data("not json".utf8)
+        defaults.set(garbage, forKey: "timers")
+        defaults.set(garbage, forKey: "alarms")
+        let store = ClockStore(defaults: defaults)
+        #expect(store.timers.count == 1 && store.alarms.isEmpty)
+        #expect(defaults.data(forKey: "timersUnreadable") == garbage)
+        #expect(defaults.data(forKey: "alarmsUnreadable") == garbage)
+    }
+
+    @Test func 시계를_바꾸면_도는_타이머와_다시_울림을_같이_옮긴다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let id = store.timers[0].id
+        store.setDuration(id, 600)
+        store.start(id)
+        let end = store.timers[0].endDate!
+        let alarm = store.addAlarm(minutes: 60)
+        let snooze = Date().addingTimeInterval(300)
+        store.forceSnooze(alarm, snooze)
+        store.shiftRelativeTimes(by: 1)
+        #expect(store.timers[0].endDate == end)
+        store.shiftRelativeTimes(by: 3600)
+        #expect(store.timers[0].endDate == end.addingTimeInterval(3600))
+        #expect(store.alarms[0].snoozeUntil == snooze.addingTimeInterval(3600))
+    }
+
+    @Test func 알람마다_소리를_정하고_저장한다() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = ClockStore(defaults: defaults)
+        let a = store.addAlarm(minutes: 60)
+        store.setAlarmSound(a, "Ping")
+        store.save()
+        let again = ClockStore(defaults: defaults)
+        #expect(again.alarms[0].sound == "Ping")
+        again.forceNext(a, Date().addingTimeInterval(-1))
+        again.tick()
+        #expect(again.ringingSound == "Ping")
+        again.stopRinging()
+        #expect(AlarmSound.title("file:종소리.mp3") == "종소리")
+        #expect(AlarmSound.title("Glass") == "Glass")
+    }
+
+    @Test func 타이머_버튼_목록을_읽는다() {
+        #expect(ClockySettings.parsePresets("1, 3, 5, 10, 25, 60, 90") == [1, 3, 5, 10, 25, 60])
+        #expect(ClockySettings.parsePresets("25 5 5 1") == [1, 5, 25])
+        #expect(ClockySettings.parsePresets("abc") == nil)
+        #expect(ClockySettings.parsePresets("0, -1, 9999") == nil)
+    }
+
     @Test func 글자() {
         let now = Date()
         Localization.language = .korean

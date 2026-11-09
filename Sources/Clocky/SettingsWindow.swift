@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Clocky 설정 창. 값은 바뀌는 즉시 저장되고 반영된다.
 final class SettingsWindowController {
     private let settings: ClockySettings
     private var window: NSWindow?
+    private var levelObservers: [NSObjectProtocol] = []
 
     init(settings: ClockySettings) {
         self.settings = settings
@@ -21,8 +23,7 @@ final class SettingsWindowController {
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = L("Clocky 설정")
             w.isReleasedWhenClosed = false
-            // 항상 위 시계 창에 가려지지 않게 한다.
-            w.level = .floating
+            levelObservers = floatWhileActive(w)
             w.contentView = NSHostingView(rootView: SettingsView(settings: settings))
             w.center()
             window = w
@@ -32,6 +33,20 @@ final class SettingsWindowController {
     }
 
     var windowNumber: Int { window?.windowNumber ?? 0 }
+}
+
+/// 앱을 쓰는 동안에는 항상 위 시계 창에 가려지지 않게 띄우고, 다른 앱으로 가면 보통 창처럼 그 앱 뒤로 보낸다.
+func floatWhileActive(_ window: NSWindow) -> [NSObjectProtocol] {
+    window.level = NSApp.isActive ? .floating : .normal
+    let center = NotificationCenter.default
+    return [
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak window] _ in
+            window?.level = .floating
+        },
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak window] _ in
+            window?.level = .normal
+        },
+    ]
 }
 
 struct SettingsView: View {
@@ -106,6 +121,13 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section {
+                PresetEditor(settings: settings)
+            } footer: {
+                Text(L("시계 창과 목록 창의 시간 버튼입니다. 분 단위로 쉼표를 넣어 적고 Return을 누릅니다. 6개까지 씁니다."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -114,12 +136,17 @@ struct SettingsView: View {
         Form {
             Section {
                 HStack {
-                    Picker(L("알람 소리"), selection: $settings.alarmSound) {
-                        ForEach(AlarmSound.choices, id: \.self) { Text($0).tag($0) }
-                    }
+                    SoundPicker(title: L("알람 소리"), selection: $settings.alarmSound, choices: soundChoices)
                     Button { AlarmSound.play() } label: { Image(systemName: "play.fill") }
                         .help(L("들어 보기"))
                         .accessibilityLabel(L("들어 보기"))
+                }
+                HStack {
+                    Spacer()
+                    if settings.alarmSound.hasPrefix(AlarmSound.filePrefix) {
+                        Button(L("이 파일 지우기")) { removeCustomSound() }
+                    }
+                    Button(L("내 소리 파일 추가…")) { importSound() }
                 }
                 LabeledContent(L("소리 크기")) {
                     HStack {
@@ -140,9 +167,41 @@ struct SettingsView: View {
         .onChange(of: settings.alarmSound) { _ in AlarmSound.play() }
     }
 
-    /// 시계 창에서 쓰는 키. 바꿀 수는 없고 안내만 한다.
+    /// 파일을 더하거나 지우면 목록을 다시 읽는다.
+    @State private var soundChoices = AlarmSound.choices
+
+    private func importSound() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.message = L("알람으로 쓸 소리 파일을 고르세요. Clocky 폴더로 복사해 둡니다.")
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let id = AlarmSound.importFile(url) {
+            soundChoices = AlarmSound.choices
+            settings.alarmSound = id
+        } else {
+            let alert = NSAlert()
+            alert.messageText = L("이 파일은 소리로 열 수 없습니다.")
+            alert.runModal()
+        }
+    }
+
+    private func removeCustomSound() {
+        let id = settings.alarmSound
+        settings.alarmSound = AlarmSound.defaultName
+        AlarmSound.removeFile(id)
+        soundChoices = AlarmSound.choices
+    }
+
+    /// 위는 바꿀 수 있는 전역 단축키, 아래는 창 안에서 쓰는 키 안내.
     private var shortcuts: some View {
         Form {
+            Section {
+                HotKeyEditor(settings: settings)
+            } header: {
+                Text(L("어디서나 (다른 앱을 쓰는 중에도)"))
+            }
             Section(L("시계 창")) {
                 shortcut("스페이스", "고른 타이머 시작·일시정지, 고른 알람 켜기·끄기")
                 shortcut("↑ ↓", "목록에서 고르기")
@@ -153,7 +212,7 @@ struct SettingsView: View {
                 shortcut("Esc", "울림 끄기, 이름 편집 끝내기")
                 shortcut("S", "울리는 동안 다시 울림")
             }
-            Section(L("어디서나")) {
+            Section(L("Clocky 창")) {
                 shortcut("⌘L", "전체 목록")
                 shortcut("⌘,", "설정")
             }
@@ -165,5 +224,150 @@ struct SettingsView: View {
         LabeledContent(L(action)) {
             Text(L(keys)).monospaced().foregroundStyle(.secondary)
         }
+    }
+}
+
+/// 시스템 소리와 내 소리 파일을 한 메뉴에서 고른다.
+struct SoundPicker<Tag: Hashable>: View {
+    let title: String
+    @Binding var selection: Tag
+    let choices: [String]
+    /// 목록 창의 알람처럼 "기본 소리"를 맨 위에 둘 때.
+    var defaultOption: (label: String, tag: Tag)?
+    var tag: (String) -> Tag = { $0 as! Tag }
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            if let defaultOption {
+                Text(defaultOption.label).tag(defaultOption.tag)
+                Divider()
+            }
+            ForEach(choices.filter { !$0.hasPrefix(AlarmSound.filePrefix) }, id: \.self) { Text(AlarmSound.title($0)).tag(tag($0)) }
+            let files = choices.filter { $0.hasPrefix(AlarmSound.filePrefix) }
+            if !files.isEmpty {
+                Divider()
+                ForEach(files, id: \.self) { Text(AlarmSound.title($0)).tag(tag($0)) }
+            }
+        }
+    }
+}
+
+/// 타이머 시간 버튼을 "1, 3, 5, 10, 25"처럼 적어 바꾼다.
+private struct PresetEditor: View {
+    @ObservedObject var settings: ClockySettings
+    @State private var text = ""
+    @State private var invalid = false
+
+    var body: some View {
+        LabeledContent(L("타이머 버튼(분)")) {
+            HStack {
+                TextField("", text: $text)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 140)
+                    .onSubmit(apply)
+                    .foregroundStyle(invalid ? Color.red : Color.primary)
+                Button(L("기본값")) {
+                    settings.timerPresets = ClockySettings.defaultPresets
+                    load()
+                }
+                .disabled(settings.timerPresets == ClockySettings.defaultPresets)
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        text = settings.timerPresets.map(String.init).joined(separator: ", ")
+        invalid = false
+    }
+
+    private func apply() {
+        guard let presets = ClockySettings.parsePresets(text) else {
+            invalid = true
+            NSSound.beep()
+            return
+        }
+        settings.timerPresets = presets
+        load()
+    }
+}
+
+/// 전역 단축키를 바꾼다. 버튼을 누른 뒤 새 조합을 누르면 바로 등록된다.
+private struct HotKeyEditor: View {
+    @ObservedObject var settings: ClockySettings
+    @State private var recording: HotKeyAction?
+    @State private var monitor: Any?
+    @State private var message: String?
+
+    var body: some View {
+        ForEach(HotKeyAction.allCases, id: \.self) { action in
+            LabeledContent(action.title) {
+                HStack(spacing: 8) {
+                    if settings.failedHotKeys.contains(action) {
+                        Text(L("등록하지 못함")).font(.caption).foregroundStyle(.red)
+                    }
+                    Button(recording == action ? L("키를 누르세요") : settings.hotKeys[action.rawValue]?.displayText ?? L("없음")) {
+                        recording == action ? stop() : start(action)
+                    }
+                    .frame(minWidth: 110)
+                    Button {
+                        settings.hotKeys[action.rawValue] = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(settings.hotKeys[action.rawValue] == nil)
+                    .help(L("단축키 지우기"))
+                    .accessibilityLabel(L("단축키 지우기"))
+                }
+            }
+        }
+        HStack {
+            Text(message ?? L("Esc를 누르면 입력을 취소합니다."))
+                .font(.caption)
+                .foregroundStyle(message == nil ? Color.secondary : Color.red)
+            Spacer()
+            Button(L("기본값")) {
+                stop()
+                settings.hotKeys = KeyCombo.defaults
+            }
+        }
+        .onDisappear(perform: stop)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in stop() }
+    }
+
+    private func start(_ action: HotKeyAction) {
+        stop()
+        recording = action
+        settings.isRecordingHotKey = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handle(event, for: action)
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        recording = nil
+        message = nil
+        if settings.isRecordingHotKey { settings.isRecordingHotKey = false }
+    }
+
+    private func handle(_ event: NSEvent, for action: HotKeyAction) {
+        if event.keyCode == 53 { // Esc
+            stop()
+            return
+        }
+        guard let combo = KeyCombo(event: event) else {
+            message = L("⌘, ⌃, ⌥ 중 하나와 함께 누르세요.")
+            return
+        }
+        if let other = HotKeyAction.allCases.first(where: { $0 != action && settings.hotKeys[$0.rawValue] == combo }) {
+            message = L("%@에서 쓰는 단축키입니다.", other.title)
+            return
+        }
+        settings.hotKeys[action.rawValue] = combo
+        stop()
     }
 }

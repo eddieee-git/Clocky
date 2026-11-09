@@ -12,8 +12,11 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/arm64-apple-macosx/release/Clocky "$app/Contents/MacOS/Clocky"
 cp Resources/Info.plist "$app/Contents/Info.plist"
 cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-# 개발자 인증서가 없으므로 임시 서명만 한다. 강화 런타임(--options runtime)을 켜서 실행 중인 앱에 다른 코드를 끼워 넣지 못하게 한다.
-codesign --force --sign - --options runtime "$app"
+# 샌드박스를 켜기 전 판의 설정을 컨테이너로 옮기는 안내서. 처음 실행할 때 macOS가 읽는다.
+cp Resources/container-migration.plist "$app/Contents/Resources/container-migration.plist"
+# 개발자 인증서가 없으므로 임시 서명만 한다. 강화 런타임(--options runtime)을 켜서 실행 중인 앱에 다른 코드를 끼워 넣지 못하게 하고,
+# 앱 샌드박스를 켠다.
+codesign --force --sign - --options runtime --entitlements Resources/Clocky.entitlements "$app"
 
 # 내려받은 쪽에서 응용 프로그램 폴더로 끌어다 놓을 수 있게 바로가기를 함께 넣는다.
 staging=build/dmg

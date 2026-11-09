@@ -8,6 +8,7 @@ final class ListWindowController: NSObject, NSWindowDelegate {
     let model: ClockListModel
     private let undoManager: UndoManager
     private var window: ListWindow?
+    private var levelObservers: [NSObjectProtocol] = []
 
     init(model: ClockListModel, undoManager: UndoManager) {
         self.model = model
@@ -28,8 +29,7 @@ final class ListWindowController: NSObject, NSWindowDelegate {
             w.title = L("전체 목록")
             w.isReleasedWhenClosed = false
             w.minSize = NSSize(width: 640, height: 400)
-            // 항상 위 시계 창에 가려지지 않게 한다.
-            w.level = .floating
+            levelObservers = floatWhileActive(w)
             w.delegate = self
             w.contentView = NSHostingView(rootView: ClockListView(model: model, store: model.store, settings: model.settings))
             w.setFrameAutosaveName("ClockyList")
@@ -45,12 +45,10 @@ final class ListWindowController: NSObject, NSWindowDelegate {
         model.store.isListDisplayed = false
     }
 
-    func windowDidMiniaturize(_ notification: Notification) {
-        model.store.isListDisplayed = false
-    }
-
-    func windowDidDeminiaturize(_ notification: Notification) {
-        model.store.isListDisplayed = true
+    /// 가려지거나 내려 두었으면 남은 시간을 초마다 고치지 않는다.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window else { return }
+        model.store.isListDisplayed = window.isVisible && window.occlusionState.contains(.visible)
     }
 
     /// 시계 창과 같은 되돌리기 기록을 쓴다.
@@ -171,13 +169,35 @@ struct ClockListView: View {
     @ObservedObject var settings: ClockySettings
 
     var body: some View {
-        HStack(spacing: 0) {
-            ClockListSidebar(model: model, store: store, settings: settings)
-                .frame(width: 300)
-            Divider()
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            if store.isRinging { ringingBar }
+            HStack(spacing: 0) {
+                ClockListSidebar(model: model, store: store, settings: settings)
+                    .frame(width: 300)
+                Divider()
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
+        .environment(\.locale, settings.locale)
+    }
+
+    /// 울리는 동안 이 창에서도 끄거나 다시 울림을 고를 수 있게 한다.
+    private var ringingBar: some View {
+        let names = store.timers.filter { $0.phase == .ringing }.map { store.displayName(of: $0) }
+            + store.alarms.filter { store.ringingAlarmIDs.contains($0.id) }.map { store.displayName(of: $0) }
+        return HStack(spacing: 10) {
+            Image(systemName: "bell.and.waves.left.and.right.fill")
+            Text(L("울리는 중: %@", names.joined(separator: ", ")))
+                .lineLimit(1)
+            Spacer()
+            Button(L("%d분 뒤 다시 울림", store.snoozeMinutes)) { store.snooze() }
+            Button(L("끄기")) { store.stopRinging() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.25))
     }
 
     @ViewBuilder
@@ -432,7 +452,7 @@ private struct TimerDetail: View {
                     }
                     HStack(spacing: 4) {
                         Spacer()
-                        ForEach(ClockStore.presets, id: \.self) { minutes in
+                        ForEach(store.presets, id: \.self) { minutes in
                             Button(L("%d분", minutes)) { store.setDuration(item.id, minutes * 60); durationText = clockText(minutes * 60) }
                         }
                     }
@@ -449,6 +469,8 @@ private struct TimerDetail: View {
                          remove: { model.remove([item.id]) })
         }
         .onAppear { durationText = clockText(item.duration) }
+        // 시계 창에서 시간을 바꿔도 이 칸이 따라간다.
+        .onChange(of: item.duration) { durationText = clockText($0) }
     }
 
     private func applyDuration() {
@@ -513,6 +535,20 @@ private struct AlarmDetail: View {
                         }
                     }
                     .controlSize(.small)
+                }
+                Section {
+                    HStack {
+                        SoundPicker(title: L("소리"),
+                                    selection: Binding(get: { store.alarms.first { $0.id == item.id }?.sound },
+                                                       set: { store.setAlarmSound(item.id, $0) }),
+                                    choices: AlarmSound.choices,
+                                    defaultOption: (L("기본 (%@)", AlarmSound.title(settings.alarmSound)), nil),
+                                    tag: { Optional($0) })
+                        Button { AlarmSound.play(item.sound) } label: { Image(systemName: "play.fill") }
+                            .buttonStyle(.borderless)
+                            .help(L("들어 보기"))
+                            .accessibilityLabel(L("들어 보기"))
+                    }
                 }
                 Section {
                     LabeledContent(L("다음 울림"), value: nextText)

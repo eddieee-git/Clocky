@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 샌드박스 전 판(0.1)이 쓰던 설정과 소리 파일을 처음 실행할 때 컨테이너로 옮긴다. -->
+	<key>Move</key>
+	<array>
+		<string>${Library}/Preferences/com.eddieee.Clocky.plist</string>
+		<string>${ApplicationSupport}/Clocky</string>
+	</array>
+</dict>
+</plist>

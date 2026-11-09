@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import UniformTypeIdentifiers
 
 /// 앱 화면 언어. 메뉴에서 고르면 바로 바뀐다.
 enum AppLanguage: String, CaseIterable {
@@ -26,10 +27,14 @@ final class ClockySettings: ObservableObject {
         static let language = "language", alarmSound = "alarmSound", volume = "soundVolume"
         static let warning = "warningSeconds", snooze = "snoozeMinutes", soundLimit = "soundLimitSeconds"
         static let menuBarTimer = "menuBarShowsTimer", menuBarAlarm = "menuBarShowsAlarm", confirmDelete = "confirmDelete"
+        static let presets = "timerPresets", hotKeys = "hotKeys"
     }
     static let warningChoices = [0, 5, 10, 30, 60]
     static let snoozeChoices = [1, 3, 5, 10, 15, 30]
     static let soundLimitChoices = [10, 30, 60, 180, 300]
+    static let defaultPresets = [1, 3, 5, 10, 25]
+    /// 시계 창 한 줄에 들어가는 만큼.
+    static let maxPresets = 6
     private let defaults = UserDefaults.standard
 
     @Published var language: AppLanguage {
@@ -61,6 +66,16 @@ final class ClockySettings: ObservableObject {
     @Published var menuBarShowsAlarm: Bool { didSet { defaults.set(menuBarShowsAlarm, forKey: Keys.menuBarAlarm) } }
     /// 지우기 전에 묻는다. 꺼 두어도 ⌘Z로 되살릴 수 있다.
     @Published var confirmDelete: Bool { didSet { defaults.set(confirmDelete, forKey: Keys.confirmDelete) } }
+    /// 타이머 시간 버튼(분). 1~6개.
+    @Published var timerPresets: [Int] { didSet { defaults.set(timerPresets, forKey: Keys.presets) } }
+    /// 전역 단축키. 동작 이름 → 키 조합. 없는 동작은 단축키가 없다.
+    @Published var hotKeys: [String: KeyCombo] {
+        didSet { defaults.set(try? JSONEncoder().encode(hotKeys), forKey: Keys.hotKeys) }
+    }
+    /// 다른 앱이 이미 쓰는 등의 이유로 등록하지 못한 단축키.
+    @Published var failedHotKeys: Set<HotKeyAction> = []
+    /// 단축키를 새로 누르는 동안에는 등록을 풀어 둔다. 그래야 지금 단축키도 다시 고를 수 있다.
+    @Published var isRecordingHotKey = false
     /// 시스템의 로그인 항목에 저장되므로 UserDefaults에 두지 않는다.
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// `swift run`으로 실행하면 번들이 없어 로그인 항목에 등록할 수 없다.
@@ -68,7 +83,7 @@ final class ClockySettings: ObservableObject {
 
     init() {
         language = defaults.string(forKey: Keys.language).flatMap(AppLanguage.init) ?? .systemDefault
-        alarmSound = defaults.string(forKey: Keys.alarmSound).flatMap { AlarmSound.choices.contains($0) ? $0 : nil }
+        alarmSound = defaults.string(forKey: Keys.alarmSound).flatMap { AlarmSound.isAvailable($0) ? $0 : nil }
             ?? AlarmSound.defaultName
         soundVolume = min(max(defaults.object(forKey: Keys.volume) as? Double ?? 1, 0), 1)
         warningSeconds = (defaults.object(forKey: Keys.warning) as? Int).flatMap { Self.warningChoices.contains($0) ? $0 : nil } ?? 10
@@ -78,9 +93,23 @@ final class ClockySettings: ObservableObject {
         menuBarShowsTimer = defaults.object(forKey: Keys.menuBarTimer) as? Bool ?? true
         menuBarShowsAlarm = defaults.object(forKey: Keys.menuBarAlarm) as? Bool ?? true
         confirmDelete = defaults.bool(forKey: Keys.confirmDelete)
+        timerPresets = (defaults.array(forKey: Keys.presets) as? [Int]).flatMap { Self.validPresets($0) } ?? Self.defaultPresets
+        hotKeys = defaults.data(forKey: Keys.hotKeys).flatMap { try? JSONDecoder().decode([String: KeyCombo].self, from: $0) }
+            ?? KeyCombo.defaults
         Localization.language = language
         AlarmSound.name = alarmSound
         AlarmSound.volume = Float(soundVolume)
+    }
+
+    /// 1분~99시간 사이, 겹치지 않게, 작은 것부터, 많아야 6개. 남는 것이 없으면 nil.
+    static func validPresets(_ minutes: [Int]) -> [Int]? {
+        let valid = Array(Set(minutes.filter { (1...5999).contains($0) })).sorted().prefix(maxPresets)
+        return valid.isEmpty ? nil : Array(valid)
+    }
+
+    /// "1, 3, 5" 같은 글을 버튼 목록으로 바꾼다.
+    static func parsePresets(_ text: String) -> [Int]? {
+        validPresets(text.split(whereSeparator: { ",; ".contains($0) }).compactMap { Int($0) })
     }
 
     /// 지우기 전에 확인을 켜 두었으면 묻는다. 지워도 되면 true.
@@ -103,6 +132,9 @@ final class ClockySettings: ObservableObject {
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
+
+    /// 시각 고르기 칸도 앱 언어를 따르게 한다. 그러지 않으면 한국어 화면에 "7:30 AM"이 나온다.
+    var locale: Locale { Locale(identifier: language == .korean ? "ko_KR" : "en_US") }
 
     /// "오전 9:00" 또는 "9:00 AM".
     func timeText(_ date: Date) -> String {
@@ -132,18 +164,74 @@ final class ClockySettings: ObservableObject {
 }
 
 /// 타이머와 알람이 끝났을 때 내는 소리.
+/// 타이머와 알람이 끝났을 때 내는 소리. 시스템 사운드 이름이나 "file:파일 이름"으로 가리킨다.
+/// 내 소리 파일은 앱 지원 폴더의 Sounds에 복사해 두고 쓴다.
 enum AlarmSound {
     static let defaultName = "Glass"
-    static let choices = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse",
-                          "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
+    static let systemChoices = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse",
+                                "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
+    static let filePrefix = "file:"
+    /// 설정에서 고른 기본 소리.
     static var name = defaultName
     static var volume: Float = 1
     /// 앞 소리가 끝나기 전에 다시 내려면 같은 객체를 멈췄다 다시 틀어야 한다.
     private static var current: NSSound?
 
-    static func play() {
+    static var folder: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("Clocky/Sounds", isDirectory: true)
+    }
+
+    /// 복사해 둔 내 소리 파일들. 이름 순.
+    static var customChoices: [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return files.filter { !$0.hasPrefix(".") }.sorted().map { filePrefix + $0 }
+    }
+
+    static var choices: [String] { systemChoices + customChoices }
+
+    static func isAvailable(_ id: String) -> Bool {
+        systemChoices.contains(id) || customChoices.contains(id)
+    }
+
+    /// 메뉴에 보일 이름. 내 파일은 확장자를 뗀다.
+    static func title(_ id: String) -> String {
+        guard id.hasPrefix(filePrefix) else { return id }
+        return (String(id.dropFirst(filePrefix.count)) as NSString).deletingPathExtension
+    }
+
+    /// 고른 파일을 Sounds 폴더로 복사하고 그 소리의 이름을 돌려준다. 소리로 열 수 없는 파일이면 nil.
+    static func importFile(_ url: URL) -> String? {
+        guard NSSound(contentsOf: url, byReference: true) != nil else { return nil }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var target = folder.appendingPathComponent(url.lastPathComponent)
+        var index = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            let base = url.deletingPathExtension().lastPathComponent
+            target = folder.appendingPathComponent("\(base) \(index).\(url.pathExtension)")
+            index += 1
+        }
+        guard (try? FileManager.default.copyItem(at: url, to: target)) != nil else { return nil }
+        return filePrefix + target.lastPathComponent
+    }
+
+    static func removeFile(_ id: String) {
+        guard id.hasPrefix(filePrefix) else { return }
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent(String(id.dropFirst(filePrefix.count))))
+    }
+
+    private static func sound(_ id: String) -> NSSound? {
+        if id.hasPrefix(filePrefix) {
+            let url = folder.appendingPathComponent(String(id.dropFirst(filePrefix.count)))
+            return NSSound(contentsOf: url, byReference: false)
+        }
+        return NSSound(named: id)
+    }
+
+    /// 주어진 소리를 낸다. 없거나 지워진 소리면 기본 소리, 그것도 없으면 Glass를 낸다.
+    static func play(_ id: String? = nil) {
         current?.stop()
-        current = NSSound(named: name)
+        current = sound(id ?? name) ?? sound(name) ?? NSSound(named: defaultName)
         current?.volume = volume
         current?.play()
     }
@@ -301,6 +389,33 @@ enum Localization {
         "%d개 선택됨": "%d selected",
         "알람 모두 켜기": "Turn All Alarms On",
         "알람 모두 끄기": "Turn All Alarms Off",
+        "울리는 중: %@": "Ringing: %@",
+        "전체 목록 (⌘L)": "All Timers & Alarms (⌘L)",
+        "설정 (⌘,)": "Settings (⌘,)",
+        "%@, %@ 남음": "%@, %@ left",
+        "지금 시각 %@": "Current time %@",
+        "설정 열기": "Open Settings",
+        "기본 (%@)": "Default (%@)",
+        "이 파일 지우기": "Remove This File",
+        "내 소리 파일 추가…": "Add Sound File…",
+        "알람으로 쓸 소리 파일을 고르세요. Clocky 폴더로 복사해 둡니다.": "Choose a sound file for alarms. Clocky keeps a copy.",
+        "이 파일은 소리로 열 수 없습니다.": "This file can't be opened as a sound.",
+        "시계 창과 목록 창의 시간 버튼입니다. 분 단위로 쉼표를 넣어 적고 Return을 누릅니다. 6개까지 씁니다.": "Duration buttons in the clock and list windows. Enter minutes separated by commas and press Return. Up to 6.",
+        "타이머 버튼(분)": "Timer buttons (min)",
+        "기본값": "Defaults",
+        "어디서나 (다른 앱을 쓰는 중에도)": "Anywhere (even in other apps)",
+        "Clocky 창": "Clocky Windows",
+        "시계 창 보이기/숨기기": "Show/hide clock window",
+        "고른 타이머 시작/일시정지": "Start/pause selected timer",
+        "울림 끄기": "Stop ringing",
+        "전체 목록 열기": "Open all timers & alarms",
+        "등록하지 못함": "Couldn't register",
+        "키를 누르세요": "Press keys",
+        "없음": "None",
+        "단축키 지우기": "Clear shortcut",
+        "Esc를 누르면 입력을 취소합니다.": "Press Esc to cancel.",
+        "⌘, ⌃, ⌥ 중 하나와 함께 누르세요.": "Include ⌘, ⌃, or ⌥.",
+        "%@에서 쓰는 단축키입니다.": "Already used for %@.",
         // 편집 메뉴
         "편집": "Edit",
         "실행 취소": "Undo",

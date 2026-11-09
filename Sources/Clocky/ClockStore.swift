@@ -56,6 +56,8 @@ struct AlarmItem: Identifiable, Equatable {
     var minutes: Int
     var enabled: Bool
     var days: Set<Int>
+    /// 이 알람만의 소리. 없으면 설정의 기본 소리.
+    var sound: String?
     /// 정해 둔 다음 시각. 꺼져 있으면 없다.
     var next: Date?
     /// "5분 뒤 다시"를 누른 뒤 한 번 더 울릴 때. 정해 둔 시각과 따로 센다.
@@ -114,7 +116,6 @@ struct AlarmItem: Identifiable, Equatable {
 final class ClockStore: ObservableObject {
     enum Mode: String { case timer, alarm }
 
-    static let presets = [1, 3, 5, 10, 25]
     static let defaultDuration = 5 * 60
     static let maxDuration = 100 * 3600 - 1
     /// 메뉴바에 알람까지 남은 시간을 보여 주기 시작하는 때.
@@ -153,13 +154,20 @@ final class ClockStore: ObservableObject {
         var number: Int?
         var days: [Int]?
         var snoozeUntil: Date?
+        var sound: String?
+        /// 앱이 꺼진 동안 지난 알람을 켤 때 울리려고 저장한다.
+        var next: Date?
     }
     private let defaults: UserDefaults
+    /// 벽시계와 잠자기 중에도 흐르는 시계의 차이. 시스템 시계를 손으로 바꾸면 달라진다.
+    private var clockOffset = ClockStore.currentClockOffset()
 
     // 설정 창에서 바꾸는 값. 창이 설정을 지켜보다 넣어 준다.
     /// 끝나기 몇 초 전부터 깜빡일지. 0이면 깜빡이지 않는다.
     var warningSeconds = 10 { didSet { scheduleTick() } }
     var snoozeMinutes = 5
+    /// 타이머 시간 버튼(분).
+    var presets = [1, 3, 5, 10, 25]
     /// 소리를 되풀이하는 최대 시간.
     var soundLimit: TimeInterval = 60
     /// 메뉴바에 1시간 안의 알람까지 남은 시간을 보여 주는지. 끄면 그것 때문에 초마다 깨어나지 않는다.
@@ -198,9 +206,13 @@ final class ClockStore: ObservableObject {
         let start = Date()
 
         var timers: [TimerItem]
-        if let data = defaults.data(forKey: Keys.timers),
-           let saved = try? JSONDecoder().decode([SavedTimer].self, from: data) {
+        let timerData = defaults.data(forKey: Keys.timers)
+        if let data = timerData, let saved = try? JSONDecoder().decode([SavedTimer].self, from: data) {
             timers = saved.enumerated().map { Self.restore($1, index: $0, at: start) }
+        } else if let data = timerData {
+            // 읽지 못한 값은 덮어쓰기 전에 따로 남겨 둔다.
+            Self.keepUnreadable(data, key: Keys.timers, in: defaults)
+            timers = []
         } else {
             let duration = defaults.integer(forKey: Keys.duration)
             timers = [TimerItem(name: defaults.string(forKey: Keys.name) ?? "", number: 1,
@@ -209,9 +221,12 @@ final class ClockStore: ObservableObject {
         if timers.isEmpty { timers = [TimerItem(number: 1, duration: Self.defaultDuration)] }
 
         var alarms: [AlarmItem]
-        if let data = defaults.data(forKey: Keys.alarms),
-           let saved = try? JSONDecoder().decode([SavedAlarm].self, from: data) {
+        let alarmData = defaults.data(forKey: Keys.alarms)
+        if let data = alarmData, let saved = try? JSONDecoder().decode([SavedAlarm].self, from: data) {
             alarms = saved.enumerated().map { Self.restore($1, index: $0) }
+        } else if let data = alarmData {
+            Self.keepUnreadable(data, key: Keys.alarms, in: defaults)
+            alarms = []
         } else if [Keys.alarmName, Keys.alarmMinutes, Keys.alarmEnabled, Keys.alarmRepeats].contains(where: { defaults.object(forKey: $0) != nil }) {
             let repeats = defaults.object(forKey: Keys.alarmRepeats) as? Bool ?? true
             alarms = [AlarmItem(name: defaults.string(forKey: Keys.alarmName) ?? "", number: 1,
@@ -221,7 +236,13 @@ final class ClockStore: ObservableObject {
         } else {
             alarms = []
         }
-        for i in alarms.indices { alarms[i].schedule(after: start) }
+        for i in alarms.indices {
+            // 앱이 꺼진 동안 지난 알람은 1시간 안이면 첫 확인 때 울린다.
+            if alarms[i].enabled, let missed = alarms[i].next, missed <= start, start.timeIntervalSince(missed) < Self.lateLimit {
+                continue
+            }
+            alarms[i].schedule(after: start)
+        }
 
         self.timers = timers
         self.alarms = alarms
@@ -274,7 +295,14 @@ final class ClockStore: ObservableObject {
         var item = AlarmItem(id: saved.id, name: name, number: number, minutes: min(max(saved.minutes, 0), 24 * 60 - 1),
                              enabled: saved.enabled, days: days)
         item.snoozeUntil = saved.snoozeUntil
+        item.next = saved.next
+        item.sound = saved.sound
         return item
+    }
+
+    private static func keepUnreadable(_ data: Data, key: String, in defaults: UserDefaults) {
+        defaults.set(data, forKey: key + "Unreadable")
+        NSLog("Clocky: 저장된 %@ 값을 읽지 못해 %@Unreadable에 남겨 두었습니다.", key, key)
     }
 
     /// 예전 판은 새 항목에 "타이머 2"처럼 그때의 언어로 이름을 박아 두었다. 그런 이름은 비우고 번호만 남긴다.
@@ -307,7 +335,7 @@ final class ClockStore: ObservableObject {
         }
         let savedAlarms = alarms.map {
             SavedAlarm(id: $0.id, name: $0.name, minutes: $0.minutes, enabled: $0.enabled, repeats: $0.repeats,
-                       number: $0.number, days: $0.days.sorted(), snoozeUntil: $0.snoozeUntil)
+                       number: $0.number, days: $0.days.sorted(), snoozeUntil: $0.snoozeUntil, sound: $0.sound, next: $0.next)
         }
         if let data = try? JSONEncoder().encode(savedTimers) { defaults.set(data, forKey: Keys.timers) }
         if let data = try? JSONEncoder().encode(savedAlarms) { defaults.set(data, forKey: Keys.alarms) }
@@ -329,8 +357,17 @@ final class ClockStore: ObservableObject {
         observers.append((workspace, observer))
     }
 
+    /// 벽시계 시각 - 잠자기 중에도 흐르는 시계. 시계를 손으로 바꿀 때만 크게 달라진다.
+    static func currentClockOffset() -> TimeInterval {
+        Date().timeIntervalSince1970 - Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+    }
+
     func clockDidChange() {
         NSTimeZone.resetSystemTimeZone()
+        // 시계를 손으로 바꿨으면 도는 타이머와 다시 알림은 실제로 흐른 시간대로 남도록 끝나는 시각을 같이 옮긴다.
+        let offset = Self.currentClockOffset()
+        shiftRelativeTimes(by: offset - clockOffset)
+        clockOffset = offset
         // 바뀌기 전에 이미 지난 알람은 먼저 울린다.
         tick()
         let date = Date()
@@ -340,6 +377,23 @@ final class ClockStore: ObservableObject {
             return alarm
         }
         if rescheduled != alarms { alarms = rescheduled }
+    }
+
+    /// 남은 시간으로 정해진 것(도는 타이머, 다시 알림)을 시계가 바뀐 만큼 옮긴다. 2초 안의 차이는 무시한다.
+    func shiftRelativeTimes(by jump: TimeInterval) {
+        guard abs(jump) >= 2 else { return }
+        let shiftedTimers = timers.map { item -> TimerItem in
+            var item = item
+            if item.phase == .running, let end = item.endDate { item.endDate = end.addingTimeInterval(jump) }
+            return item
+        }
+        if shiftedTimers != timers { timers = shiftedTimers }
+        let shiftedAlarms = alarms.map { item -> AlarmItem in
+            var item = item
+            if let snooze = item.snoozeUntil { item.snoozeUntil = snooze.addingTimeInterval(jump) }
+            return item
+        }
+        if shiftedAlarms != alarms { alarms = shiftedAlarms }
     }
 
     // MARK: 상태
@@ -516,6 +570,11 @@ final class ClockStore: ObservableObject {
         }
     }
 
+    /// nil이면 기본 소리를 쓴다.
+    func setAlarmSound(_ id: UUID, _ sound: String?) {
+        updateAlarm(id) { $0.sound = sound }
+    }
+
     func setAlarmDays(_ id: UUID, _ days: Set<Int>) {
         updateAlarm(id) { $0.days = days }
     }
@@ -546,6 +605,7 @@ final class ClockStore: ObservableObject {
         let source = alarms[index]
         var copy = AlarmItem(name: source.name, number: (alarms.map(\.number).max() ?? 0) + 1, minutes: source.minutes,
                              enabled: source.enabled, days: source.days)
+        copy.sound = source.sound
         copy.schedule(after: Date())
         alarms.insert(copy, at: index + 1)
         return copy.id
@@ -757,12 +817,17 @@ final class ClockStore: ObservableObject {
                 self?.stopSound()
                 return
             }
-            if Self.ringPattern[beat % Self.ringPattern.count] { AlarmSound.play() }
+            if Self.ringPattern[beat % Self.ringPattern.count] { AlarmSound.play(self.ringingSound) }
             beat += 1
         }
         RunLoop.main.add(timer, forMode: .common)
         soundTimer = timer
         timer.fire()
+    }
+
+    /// 울리는 알람에 저마다 소리가 있으면 처음 것을 낸다. 타이머만 울리면 기본 소리.
+    var ringingSound: String? {
+        alarms.first { ringingAlarmIDs.contains($0.id) && $0.sound != nil }?.sound
     }
 
     /// 소리가 울리는 중인지.
@@ -774,7 +839,8 @@ final class ClockStore: ObservableObject {
         AlarmSound.stop()
     }
 
-    // MARK: 시험용
+    #if DEBUG
+    // MARK: 시험용 (디버그 빌드에만 들어간다)
 
     /// 시험에서 분 단위 알람을 기다리지 않도록 다음 시각을 옮긴다.
     func forceNext(_ id: UUID, _ date: Date) {
@@ -792,11 +858,15 @@ final class ClockStore: ObservableObject {
         timers[index].endDate = date
     }
 
-    /// "90"은 90분, "5:00"은 5분, "1:30:00"은 1시간 30분.
+    #endif
+
+    /// "90"은 90분, "5:00"은 5분, "1:30:00"은 1시간 30분. 0이거나 최대(99:59:59)를 넘으면 nil.
     static func parse(_ text: String) -> Int? {
         let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", omittingEmptySubsequences: false)
         let numbers = parts.map { Int($0.trimmingCharacters(in: .whitespaces)) }
-        guard !numbers.isEmpty, numbers.count <= 3, numbers.allSatisfy({ $0 != nil && $0! >= 0 }) else { return nil }
+        // 아주 큰 수를 곱하다 넘치지 않도록 칸마다 먼저 거른다.
+        guard !numbers.isEmpty, numbers.count <= 3,
+              numbers.allSatisfy({ $0 != nil && $0! >= 0 && $0! <= maxDuration }) else { return nil }
         let values = numbers.map { $0! }
         let seconds: Int
         switch values.count {
@@ -804,7 +874,7 @@ final class ClockStore: ObservableObject {
         case 2: seconds = values[0] * 60 + values[1]
         default: seconds = values[0] * 3600 + values[1] * 60 + values[2]
         }
-        return seconds > 0 ? seconds : nil
+        return (1...maxDuration).contains(seconds) ? seconds : nil
     }
 }
 

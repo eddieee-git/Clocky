@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusLineItems: [NSMenuItem] = []
     private var subscriptions: Set<AnyCancellable> = []
     private var showingAlarmIcon = false
+    private var hotKeys: [HotKey] = []
 
     private static let launchedKey = "hasLaunched"
 
@@ -32,6 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
         window.store.$now.combineLatest(window.store.$timers, window.store.$alarms)
             .sink { [weak self] _, _, _ in self?.updateStatusTitle() }
+            .store(in: &subscriptions)
+        // 단축키를 새로 누르는 동안에는 모두 풀어 둔다.
+        settings.$hotKeys.combineLatest(settings.$isRecordingHotKey)
+            .sink { [weak self] combos, isRecording in self?.registerHotKeys(isRecording ? [:] : combos) }
             .store(in: &subscriptions)
         // 설정에서 메뉴바 표시를 바꾸면 바로 고친다.
         settings.objectWillChange
@@ -136,6 +141,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.representedObject = line.1
             menu.insertItem(item, at: 1 + index)
             statusLineItems.append(item)
+        }
+    }
+
+    private func registerHotKeys(_ combos: [String: KeyCombo]) {
+        hotKeys = []
+        var failed = Set<HotKeyAction>()
+        for (index, action) in HotKeyAction.allCases.enumerated() {
+            guard let combo = combos[action.rawValue] else { continue }
+            if let hotKey = HotKey(id: UInt32(index + 1), combo: combo, action: { [weak self] in self?.perform(action) }) {
+                hotKeys.append(hotKey)
+            } else {
+                failed.insert(action)
+            }
+        }
+        if settings.failedHotKeys != failed { settings.failedHotKeys = failed }
+    }
+
+    func perform(_ action: HotKeyAction) {
+        let store = window.store
+        switch action {
+        case .toggleClock:
+            if window.isVisible && window.panel.isKeyWindow { window.panel.close() } else { window.show() }
+        case .toggleTimer:
+            store.toggle(store.selectedTimerID)
+        case .stopRinging:
+            store.stopRinging()
+        case .showList:
+            showList()
         }
     }
 

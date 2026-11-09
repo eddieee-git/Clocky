@@ -9,7 +9,7 @@
 
 ## 설치하기
 
-1. [Releases](https://github.com/eddieee-git/Clocky/releases)에서 `Clocky.dmg`를 내려받습니다.
+1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky.dmg`를 내려받습니다.
 2. dmg를 열고 Clocky를 Applications 폴더로 끌어다 놓습니다.
 3. dmg를 꺼냅니다.
 4. Applications 폴더에서 Clocky를 실행합니다.
@@ -57,7 +57,13 @@ xattr -dr com.apple.quarantine /Applications/Clocky.app
 1. 메뉴바 아이콘 → **Clocky 종료**로 앱을 끕니다.
 2. Applications 폴더에서 Clocky를 휴지통으로 옮깁니다.
 
-설정과 알람까지 지우려면 아래 명령을 실행합니다.
+설정, 알람, 내 소리 파일까지 지우려면 앱을 끈 뒤 Finder에서 `~/Library/Containers/com.eddieee.Clocky` 폴더를 휴지통으로 옮기거나 아래 명령을 실행합니다. macOS가 다른 앱의 데이터에 접근해도 되는지 물으면 허용합니다.
+
+```bash
+rm -rf ~/Library/Containers/com.eddieee.Clocky
+```
+
+0.1을 쓰다가 0.2를 한 번도 실행하지 않았다면 설정이 아직 예전 자리에 있으니 아래 명령도 함께 실행합니다.
 
 ```bash
 defaults delete com.eddieee.Clocky

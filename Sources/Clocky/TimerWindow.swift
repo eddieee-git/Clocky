@@ -26,6 +26,7 @@ final class TimerWindowController: NSObject, NSWindowDelegate {
         settings.$snoozeMinutes.sink { [weak self] in self?.store.snoozeMinutes = $0 }.store(in: &settingSubscriptions)
         settings.$soundLimitSeconds.sink { [weak self] in self?.store.soundLimit = TimeInterval($0) }.store(in: &settingSubscriptions)
         settings.$menuBarShowsAlarm.sink { [weak self] in self?.store.tracksMenuBarAlarm = $0 }.store(in: &settingSubscriptions)
+        settings.$timerPresets.sink { [weak self] in self?.store.presets = $0 }.store(in: &settingSubscriptions)
         // 타이머를 띄워 둔 모니터를 빼면 남은 화면으로 옮긴다.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -109,6 +110,8 @@ final class TimerWindowController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         var view = FlipTimerView(store: store, settings: settings)
         view.onSnoozeFrame = { [weak panel] frame in panel?.snoozeFrame = frame }
+        view.onOpenList = { [weak panel] in panel?.onOpenList?() }
+        view.onOpenSettings = { [weak panel] in panel?.onOpenSettings?() }
         let hosting = NSHostingView(rootView: view)
         // 내용에 따라 창 크기가 바뀌지 않게 한다. 제목 표시줄까지 내용이 덮으므로 창 전체 크기를 정한다.
         hosting.sizingOptions = []

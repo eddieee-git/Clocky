@@ -8,7 +8,33 @@ struct FlipTimerView: View {
     @ObservedObject var settings: ClockySettings
     /// 다시 울림 버튼의 자리를 창에 알린다. 창 왼쪽 위가 원점이다.
     var onSnoozeFrame: ((CGRect) -> Void)?
+    /// 목록 머리의 버튼으로 전체 목록 창과 설정 창을 연다.
+    var onOpenList: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 붉은 배경의 진하기. "동작 줄이기"를 켜 두었으면 깜빡이지 않고 옅게 물든 채로 둔다.
+    private var backgroundAlert: Double {
+        if reduceMotion { return store.isWarning || store.isRinging ? 0.25 : 0 }
+        return store.isFlashing ? 0.35 : 0
+    }
+
+    /// "타이머 1, 2분 46초 남음" 또는 "지금 시각 오후 4시 21분".
+    private var boardSpeech: String {
+        let units = store.displayedUnits
+        switch store.mode {
+        case .timer:
+            let item = store.selectedTimer
+            var parts: [String] = []
+            if units[0] > 0 { parts.append(L("%d시간", units[0])) }
+            if units[1] > 0 { parts.append(L("%d분", units[1])) }
+            if units[2] > 0 || parts.isEmpty { parts.append(L("%d초", units[2])) }
+            return L("%@, %@ 남음", store.displayName(of: item), parts.joined(separator: " "))
+        case .alarm:
+            return L("지금 시각 %@", settings.timeText(store.now))
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -56,6 +82,10 @@ struct FlipTimerView: View {
             }
             // 다른 항목으로 바꿀 때는 넘기지 않고 바로 보여 준다.
             .id(selectionKey)
+            // 숫자 하나가 넘김 효과 때문에 여러 겹으로 그려져 있어, VoiceOver에는 한 문장으로 읽힌다.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(boardSpeech)
+            .accessibilityAddTraits(.updatesFrequently)
 
             controls
                 .frame(height: 52)
@@ -69,9 +99,10 @@ struct FlipTimerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // 제목 표시줄 자리까지 써서 이름과 압정이 닫기 버튼과 같은 줄에 오게 한다.
         .ignoresSafeArea()
-        .background(Color.red.opacity(store.isFlashing ? 0.35 : 0))
-        .animation(.easeInOut(duration: 0.15), value: store.isFlashing)
+        .background(Color.red.opacity(backgroundAlert))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: backgroundAlert)
         .onPreferenceChange(SnoozeFrameKey.self) { onSnoozeFrame?($0) }
+        .environment(\.locale, settings.locale)
     }
 
     private var selectionKey: String {
@@ -130,7 +161,7 @@ struct FlipTimerView: View {
         if item.phase == .idle {
             VStack(spacing: 8) {
                 HStack(spacing: 4) {
-                    ForEach(ClockStore.presets, id: \.self) { minutes in
+                    ForEach(store.presets, id: \.self) { minutes in
                         Button(L("%d분", minutes)) { store.setDuration(item.id, minutes * 60) }
                     }
                     Button(L("직접…")) { askDuration(for: item.id) }
@@ -239,6 +270,14 @@ struct FlipTimerView: View {
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.borderless)
+                Button { onOpenList?() } label: { Image(systemName: "list.bullet") }
+                    .buttonStyle(.borderless)
+                    .help(L("전체 목록 (⌘L)"))
+                    .accessibilityLabel(L("전체 목록"))
+                Button { onOpenSettings?() } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(.borderless)
+                    .help(L("설정 (⌘,)"))
+                    .accessibilityLabel(L("설정 열기"))
             }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -365,6 +404,7 @@ struct SnoozeFrameKey: PreferenceKey {
 
 /// 숫자 두 자리가 적힌 판 하나. 값이 바뀌면 위쪽 반이 아래로 접히며 새 숫자가 드러난다.
 struct FlipCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let value: String
     let dark: Bool
 
@@ -402,7 +442,15 @@ struct FlipCard: View {
         }
         .frame(width: Self.size.width, height: Self.size.height + 1.5)
         .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-        .onChange(of: value) { newValue in flip(to: newValue) }
+        .onChange(of: value) { newValue in
+            // "동작 줄이기"를 켜 두었으면 넘기지 않고 바로 바꾼다.
+            if reduceMotion {
+                previous = newValue
+                shown = newValue
+            } else {
+                flip(to: newValue)
+            }
+        }
     }
 
     private func flip(to newValue: String) {
