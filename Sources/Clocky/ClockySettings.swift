@@ -30,6 +30,7 @@ final class ClockySettings: ObservableObject {
         static let presets = "timerPresets", hotKeys = "hotKeys"
         static let calendarFeeds = "calendarFeeds", calendarLead = "calendarLeadMinutes"
         static let calendarAllDay = "calendarIncludeAllDay", calendarDeclined = "calendarIncludeDeclined"
+        static let macCalendar = "macCalendarEnabled", macCalendarIDs = "macCalendarIDs"
     }
     static let warningChoices = [0, 5, 10, 30, 60]
     static let snoozeChoices = [1, 3, 5, 10, 15, 30]
@@ -83,6 +84,14 @@ final class ClockySettings: ObservableObject {
     @Published var calendarLeadMinutes: Int { didSet { defaults.set(calendarLeadMinutes, forKey: Keys.calendarLead) } }
     @Published var calendarIncludeAllDay: Bool { didSet { defaults.set(calendarIncludeAllDay, forKey: Keys.calendarAllDay) } }
     @Published var calendarIncludeDeclined: Bool { didSet { defaults.set(calendarIncludeDeclined, forKey: Keys.calendarDeclined) } }
+    /// Mac 캘린더 앱의 일정으로도 알릴지.
+    @Published var macCalendarEnabled: Bool { didSet { defaults.set(macCalendarEnabled, forKey: Keys.macCalendar) } }
+    /// 알림을 받을 Mac 캘린더. nil이면 모든 캘린더.
+    @Published var macCalendarIDs: [String]? {
+        didSet {
+            if let macCalendarIDs { defaults.set(macCalendarIDs, forKey: Keys.macCalendarIDs) } else { defaults.removeObject(forKey: Keys.macCalendarIDs) }
+        }
+    }
     /// 다른 앱이 이미 쓰는 등의 이유로 등록하지 못한 단축키.
     @Published var failedHotKeys: Set<HotKeyAction> = []
     /// 단축키를 새로 누르는 동안에는 등록을 풀어 둔다. 그래야 지금 단축키도 다시 고를 수 있다.
@@ -111,6 +120,8 @@ final class ClockySettings: ObservableObject {
             .flatMap { Self.calendarLeadChoices.contains($0) ? $0 : nil } ?? 5
         calendarIncludeAllDay = defaults.bool(forKey: Keys.calendarAllDay)
         calendarIncludeDeclined = defaults.bool(forKey: Keys.calendarDeclined)
+        macCalendarEnabled = defaults.bool(forKey: Keys.macCalendar)
+        macCalendarIDs = defaults.stringArray(forKey: Keys.macCalendarIDs)
         hotKeys = defaults.data(forKey: Keys.hotKeys).flatMap { try? JSONDecoder().decode([String: KeyCombo].self, from: $0) }
             ?? KeyCombo.defaults
         Localization.language = language
@@ -441,10 +452,22 @@ enum Localization {
         "주소": "Address",
         "캘린더 연결…": "Connect Calendar…",
         "캘린더 추가…": "Add Calendar…",
+        "iCal 주소 (구글 캘린더 개인 계정 등)": "iCal Addresses (personal Google Calendar, etc.)",
+        "Mac 캘린더 앱 (회사 구글 계정 등)": "Mac Calendar App (work Google accounts, etc.)",
+        "Mac 캘린더 앱의 일정으로 알림": "Alert for Mac Calendar events",
+        "Mac 캘린더 앱에 캘린더가 없습니다. 인터넷 계정에서 구글 계정을 추가하세요.": "The Calendar app has no calendars. Add your Google account in Internet Accounts.",
+        "이 Mac": "On My Mac",
+        "고른 캘린더의 이틀 안 일정 %d개": "%d events in the next 2 days from selected calendars",
+        "캘린더 접근을 허용해야 일정을 읽을 수 있습니다.": "Allow calendar access so Clocky can read your events.",
+        "접근 허용…": "Allow Access…",
+        "캘린더 접근이 허용되지 않았습니다. 시스템 설정 → 개인정보 보호 및 보안 → 캘린더에서 Clocky를 \"전체 접근\"으로 바꾸세요.": "Calendar access isn't allowed. In System Settings → Privacy & Security → Calendars, set Clocky to \"Full Access\".",
+        "시스템 설정 열기": "Open System Settings",
+        "시스템 설정 → 인터넷 계정에 구글 계정을 추가하면 그 일정이 Mac 캘린더 앱으로 들어옵니다. Apple 계정은 필요 없습니다.": "Add your Google account in System Settings → Internet Accounts and its events appear in the Calendar app. No Apple Account is needed.",
+        "인터넷 계정 열기": "Open Internet Accounts",
         "캘린더 추가": "Add Calendar",
         "연결한 캘린더가 없습니다": "No calendars connected",
         "구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합에서 \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다.": "In Google Calendar on the web, open Settings → pick a calendar on the left → Integrate calendar, then copy \"Secret address in iCal format\" and paste it here.",
-        "회사·학교 계정은 관리자가 비공개 주소를 막아 두어 이 항목이 없을 수 있습니다.": "Work and school accounts may not show this item if an administrator turned off secret addresses.",
+        "회사·학교 계정은 관리자가 비공개 주소를 막아 두어 이 항목이 없을 수 있습니다. 그럴 때는 위의 Mac 캘린더 앱 연동을 쓰거나, 이미 공개해 둔 캘린더라면 \"iCal 형식의 공개 주소\"를 넣어도 됩니다.": "Work and school accounts may not show this item if an administrator turned off secret addresses. In that case use the Mac Calendar app option above, or, if the calendar is already public, paste its \"Public address in iCal format\".",
         "비공개 주소(iCal 형식) 붙여 넣기": "Paste secret address in iCal format",
         "구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합 → \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다. 이 주소를 아는 사람은 일정을 볼 수 있으니 다른 곳에 올리지 마세요.": "In Google Calendar on the web, open Settings → pick a calendar on the left → Integrate calendar → copy \"Secret address in iCal format\" and paste it here. Anyone with this address can see your events, so don't share it.",
         "알림": "Alert",

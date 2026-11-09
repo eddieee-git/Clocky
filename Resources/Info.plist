@@ -22,6 +22,10 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Clocky reads the titles and times of your Mac Calendar events to ring before they start. Events never leave this Mac. / Clocky는 Mac 캘린더 앱의 일정 시작 전에 알람을 울리려고 일정의 제목과 시각을 읽습니다. 일정은 이 Mac 밖으로 보내지 않습니다.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Clocky reads the titles and times of your Mac Calendar events to ring before they start. Events never leave this Mac. / Clocky는 Mac 캘린더 앱의 일정 시작 전에 알람을 울리려고 일정의 제목과 시각을 읽습니다. 일정은 이 Mac 밖으로 보내지 않습니다.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

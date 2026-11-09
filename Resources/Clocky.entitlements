@@ -8,6 +8,9 @@
 	<!-- 설정에 넣은 iCal 주소에서 일정을 받아 온다. 다른 곳으로는 아무것도 보내지 않는다. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- 설정에서 켜면 Mac 캘린더 앱의 일정을 읽는다. 처음 한 번 macOS가 허용을 묻는다. -->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
 	<!-- 설정에서 사용자가 직접 고른 소리 파일만 읽는다. -->
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>

@@ -86,6 +86,18 @@ private func event(_ title: String, startsIn seconds: TimeInterval, feed: UUID =
         #expect(store.isWarning)
     }
 
+    @Test func Mac_캘린더_일정_거르기() {
+        func include(_ allDay: Bool = false, canceled: Bool = false, declined: Bool = false,
+                     allDayOn: Bool = false, declinedOn: Bool = false) -> Bool {
+            MacCalendarSource.include(isAllDay: allDay, isCanceled: canceled, declined: declined,
+                                      includeAllDay: allDayOn, includeDeclined: declinedOn)
+        }
+        #expect(include())
+        #expect(!include(canceled: true) && !include(canceled: true, allDayOn: true, declinedOn: true))
+        #expect(!include(true) && include(true, allDayOn: true))
+        #expect(!include(declined: true) && include(declined: true, declinedOn: true))
+    }
+
     @Test func 주소는_https만_받는다() {
         func check(_ text: String) -> CalendarSync.AddError? {
             if case .failure(let error) = CalendarSync.normalizedURL(text) { return error }

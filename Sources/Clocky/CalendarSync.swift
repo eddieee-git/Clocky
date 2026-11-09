@@ -43,6 +43,10 @@ final class CalendarSync: ObservableObject {
     private static let maxBytes = 20 * 1024 * 1024
 
     @Published private(set) var statuses: [UUID: Status] = [:]
+    /// Mac 캘린더 앱의 일정. 설정에서 켰을 때만 접근을 묻는다.
+    let mac = MacCalendarSource()
+    /// Mac 캘린더 앱에서 읽은 이틀 안 일정 수.
+    @Published private(set) var macEventCount = 0
     @Published private(set) var isRefreshing = false
 
     private let settings: ClockySettings
@@ -74,6 +78,19 @@ final class CalendarSync: ObservableObject {
         settings.$calendarIncludeAllDay.combineLatest(settings.$calendarIncludeDeclined).dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.recompute() } }
             .store(in: &subscriptions)
+        // Mac 캘린더를 켜면 처음 한 번 접근을 묻고, 고른 캘린더가 바뀌면 다시 셈한다.
+        settings.$macCalendarEnabled.dropFirst().removeDuplicates()
+            .sink { [weak self] enabled in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if enabled { self.mac.requestAccess { self.recompute() } } else { self.recompute() }
+                }
+            }
+            .store(in: &subscriptions)
+        settings.$macCalendarIDs.dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.recompute() } }
+            .store(in: &subscriptions)
+        mac.onChange = { [weak self] in self?.recompute() }
         settings.$calendarLeadMinutes
             .sink { [weak store] in store?.calendarLead = TimeInterval($0 * 60) }
             .store(in: &subscriptions)
@@ -144,6 +161,7 @@ final class CalendarSync: ObservableObject {
     /// 켜 둔 주소를 모두 새로 받는다. 받는 대로 다시 셈한다.
     func refresh() {
         let feeds = settings.calendarFeeds.filter(\.enabled)
+        // Mac 캘린더 앱은 스스로 새로 받으므로 여기서는 다시 셈하기만 한다.
         guard !feeds.isEmpty else { isRefreshing = false; recompute(); return }
         generation += 1
         let current = generation
@@ -215,6 +233,15 @@ final class CalendarSync: ObservableObject {
             statuses[feed.id, default: Status()].calendarName = result.calendarName
             statuses[feed.id, default: Status()].eventCount = result.events.count
             events += result.events
+        }
+        if settings.macCalendarEnabled {
+            let macEvents = mac.events(in: range, selected: settings.macCalendarIDs.map(Set.init),
+                                       includeAllDay: settings.calendarIncludeAllDay,
+                                       includeDeclined: settings.calendarIncludeDeclined)
+            if macEvents.count != macEventCount { macEventCount = macEvents.count }
+            events += macEvents
+        } else if macEventCount != 0 {
+            macEventCount = 0
         }
         store.setCalendarEvents(events.sorted { $0.start < $1.start })
     }

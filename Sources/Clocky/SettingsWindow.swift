@@ -406,6 +406,7 @@ private struct CalendarSettings: View {
 
     var body: some View {
         Form {
+            MacCalendarSection(settings: settings, sync: sync, mac: sync.mac)
             Section {
                 ForEach(settings.calendarFeeds) { feed in
                     feedRow(feed)
@@ -420,7 +421,7 @@ private struct CalendarSettings: View {
                     Button(L("캘린더 추가…")) { CalendarAddPrompt.run(sync: sync) }
                 }
             } header: {
-                Text(L("구글 캘린더"))
+                Text(L("iCal 주소 (구글 캘린더 개인 계정 등)"))
             } footer: {
                 Text(L("구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합 → \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다. 이 주소를 아는 사람은 일정을 볼 수 있으니 다른 곳에 올리지 마세요."))
                     .font(.caption)
@@ -510,7 +511,7 @@ enum CalendarAddPrompt {
         let alert = NSAlert()
         alert.messageText = L("캘린더 추가")
         var info = L("구글 캘린더 웹 → 설정 → 왼쪽에서 캘린더 고르기 → 캘린더 통합에서 \"iCal 형식의 비공개 주소\"를 복사해 붙여 넣습니다.")
-        info += "\n\n" + L("회사·학교 계정은 관리자가 비공개 주소를 막아 두어 이 항목이 없을 수 있습니다.")
+        info += "\n\n" + L("회사·학교 계정은 관리자가 비공개 주소를 막아 두어 이 항목이 없을 수 있습니다. 그럴 때는 위의 Mac 캘린더 앱 연동을 쓰거나, 이미 공개해 둔 캘린더라면 \"iCal 형식의 공개 주소\"를 넣어도 됩니다.")
         if let problem { info = problem + "\n\n" + info }
         alert.informativeText = info
         alert.accessoryView = field
@@ -541,5 +542,90 @@ enum CalendarAddPrompt {
         let lower = text.lowercased()
         guard lower.hasPrefix("https://") || lower.hasPrefix("webcal://") else { return nil }
         return lower.contains("ical") || lower.hasSuffix(".ics") ? text : nil
+    }
+}
+
+/// Mac 캘린더 앱 경유. 회사 구글 계정처럼 비공개 iCal 주소를 쓸 수 없을 때 쓴다.
+private struct MacCalendarSection: View {
+    @ObservedObject var settings: ClockySettings
+    @ObservedObject var sync: CalendarSync
+    @ObservedObject var mac: MacCalendarSource
+
+    var body: some View {
+        Section {
+            Toggle(L("Mac 캘린더 앱의 일정으로 알림"), isOn: $settings.macCalendarEnabled)
+            if settings.macCalendarEnabled {
+                switch mac.access {
+                case .granted:
+                    if mac.calendars.isEmpty {
+                        Text(L("Mac 캘린더 앱에 캘린더가 없습니다. 인터넷 계정에서 구글 계정을 추가하세요."))
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(accounts, id: \.self) { account in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(account.isEmpty ? L("이 Mac") : account)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ForEach(mac.calendars.filter { $0.account == account }) { calendar in
+                                Toggle(isOn: binding(for: calendar.id)) {
+                                    HStack(spacing: 6) {
+                                        Circle().fill(Color(nsColor: calendar.color)).frame(width: 9, height: 9)
+                                        Text(calendar.title)
+                                    }
+                                }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                    }
+                    Text(L("고른 캘린더의 이틀 안 일정 %d개", sync.macEventCount))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .notDetermined:
+                    HStack {
+                        Text(L("캘린더 접근을 허용해야 일정을 읽을 수 있습니다."))
+                        Spacer()
+                        Button(L("접근 허용…")) { mac.requestAccess { sync.recompute() } }
+                    }
+                case .denied, .writeOnly, .restricted:
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L("캘린더 접근이 허용되지 않았습니다. 시스템 설정 → 개인정보 보호 및 보안 → 캘린더에서 Clocky를 \"전체 접근\"으로 바꾸세요."))
+                            .foregroundStyle(.red)
+                        Button(L("시스템 설정 열기")) { MacCalendarSource.openPrivacySettings() }
+                    }
+                }
+            }
+        } header: {
+            Text(L("Mac 캘린더 앱 (회사 구글 계정 등)"))
+        } footer: {
+            HStack(alignment: .top) {
+                Text(L("시스템 설정 → 인터넷 계정에 구글 계정을 추가하면 그 일정이 Mac 캘린더 앱으로 들어옵니다. Apple 계정은 필요 없습니다."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(L("인터넷 계정 열기")) { MacCalendarSource.openInternetAccounts() }
+                    .controlSize(.small)
+            }
+        }
+        .onAppear {
+            // 시스템 설정에서 허용을 바꾸고 돌아왔을 수 있다.
+            if settings.macCalendarEnabled { mac.requestAccess { sync.recompute() } }
+        }
+    }
+
+    private var accounts: [String] {
+        var seen: [String] = []
+        for calendar in mac.calendars where !seen.contains(calendar.account) { seen.append(calendar.account) }
+        return seen
+    }
+
+    /// 처음에는 모든 캘린더를 켠 상태(nil)로 두고, 하나라도 끄면 켠 것만 저장한다.
+    private func binding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { settings.macCalendarIDs.map { $0.contains(id) } ?? true },
+            set: { isOn in
+                var ids = Set(settings.macCalendarIDs ?? mac.calendars.map(\.id))
+                if isOn { ids.insert(id) } else { ids.remove(id) }
+                settings.macCalendarIDs = ids.count == mac.calendars.count ? nil : mac.calendars.map(\.id).filter(ids.contains)
+            })
     }
 }
