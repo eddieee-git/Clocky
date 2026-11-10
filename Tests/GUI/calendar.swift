@@ -95,7 +95,7 @@ at(4.0) {
   sync.remove(feeds[1].id)
   check(delegate.settings.calendarFeeds.count == 1, "주소 빼기")
   // 설정 창의 캘린더 탭을 따로 띄워 찍는다.
-  let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 520, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+  let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 640, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
   w.contentView = NSHostingView(rootView: SettingsView(settings: delegate.settings, calendar: sync, tab: .calendar))
   w.orderFrontRegardless(); settingsWindow = w
 }

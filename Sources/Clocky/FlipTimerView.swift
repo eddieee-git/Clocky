@@ -102,6 +102,9 @@ struct FlipTimerView: View {
         .background(Color.red.opacity(backgroundAlert))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: backgroundAlert)
         .onPreferenceChange(SnoozeFrameKey.self) { onSnoozeFrame?($0) }
+        // 시계 창은 보통 비활성 상태로 떠 있는데, 비활성 창의 스위치는 회색으로 그려져 라이트 모드에서
+        // 켜짐과 꺼짐이 거의 같아 보인다. 이 창의 컨트롤은 늘 활성 창 모양으로 그린다.
+        .environment(\.controlActiveState, .key)
         .environment(\.locale, settings.locale)
     }
 

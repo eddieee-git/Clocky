@@ -90,7 +90,9 @@ at(14.9) {
 at(16.9) {
   check(t.ringingAlarmIDs == [t.alarms[1].id] && t.selectedAlarmID == t.alarms[1].id, "둘째 알람도 울리고 선택됨")
   let n = t.alarms[1].next!
-  check(n.timeIntervalSinceNow > 3600, "매일 알람은 다음 날로 다시 잡힘 (\(n))")
+  // 23:59 알람이니 다음 23:59(지금보다 뒤)로 다시 잡혀야 한다. 시험하는 시각에 따라 오늘일 수도 내일일 수도 있다.
+  let c = Calendar.current.dateComponents([.hour, .minute], from: n)
+  check(n > Date() && c.hour == 23 && c.minute == 59, "매일 알람은 다음 23:59로 다시 잡힘 (\(n))")
   t.stopRinging()
 }
 // 4. 남은 시간 표시

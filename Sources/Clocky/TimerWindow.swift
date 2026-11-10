@@ -19,7 +19,9 @@ final class TimerWindowController: NSObject, NSWindowDelegate {
     init(settings: ClockySettings) {
         self.settings = settings
         super.init()
-        store.onRing = { [weak self] in self?.show() }
+        // 울릴 때는 창만 앞으로 보이고 키보드는 쓰던 앱에 남긴다. 다른 앱에서 글을 쓰던 중에
+        // 다음 글자가 Clocky로 들어가 버리지 않게 한다. 끄기는 창을 누르거나 전역 단축키로 한다.
+        store.onRing = { [weak self] in self?.show(takeFocus: false) }
         store.undoManager = undoManager
         // 설정 창에서 바꾼 값을 바로 반영한다.
         settings.$warningSeconds.sink { [weak self] in self?.store.warningSeconds = $0 }.store(in: &settingSubscriptions)
@@ -38,10 +40,11 @@ final class TimerWindowController: NSObject, NSWindowDelegate {
     var frame: NSRect { panel.frame }
     func setFrame(_ frame: NSRect) { panel.setFrame(frame, display: false) }
 
-    func show() {
+    /// `takeFocus`가 false면 창을 앞에 보이기만 하고 키보드는 가져오지 않는다.
+    func show(takeFocus: Bool = true) {
         if !panel.isVisible { panel.setFrameOrigin(savedOrigin() ?? defaultOrigin()) }
         panel.orderFrontRegardless()
-        panel.makeKey()
+        if takeFocus { panel.makeKey() }
         updateDisplayed()
         // 이름 칸이 처음부터 선택돼 있으면 어수선하다. 눌러야 편집된다.
         DispatchQueue.main.async { self.panel.makeFirstResponder(nil) }
@@ -112,7 +115,7 @@ final class TimerWindowController: NSObject, NSWindowDelegate {
         view.onSnoozeFrame = { [weak panel] frame in panel?.snoozeFrame = frame }
         view.onOpenList = { [weak panel] in panel?.onOpenList?() }
         view.onOpenSettings = { [weak panel] in panel?.onOpenSettings?() }
-        let hosting = NSHostingView(rootView: view)
+        let hosting = FirstMouseHostingView(rootView: view)
         // 내용에 따라 창 크기가 바뀌지 않게 한다. 제목 표시줄까지 내용이 덮으므로 창 전체 크기를 정한다.
         hosting.sizingOptions = []
         panel.contentView = hosting
@@ -227,3 +230,8 @@ final class TimerPanel: NSPanel {
     }
 }
 
+/// 시계 창은 울릴 때 키보드를 가져오지 않고 앞에만 보인다. 그 상태에서 누른 첫 클릭이 창 활성화로만
+/// 쓰이지 않고 단추·이름 칸에 바로 닿게 한다.
+final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}

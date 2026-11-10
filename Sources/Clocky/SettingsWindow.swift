@@ -25,7 +25,7 @@ final class SettingsWindowController {
     func show(tab: SettingsView.Tab? = nil) {
         if let tab { navigation.tab = tab }
         if window == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = L("Clocky 설정")
             w.isReleasedWhenClosed = false
@@ -106,7 +106,7 @@ struct SettingsView: View {
             case .shortcuts: shortcuts
             }
         }
-        .frame(width: 520, height: 480, alignment: .top)
+        .frame(width: 640, height: 480, alignment: .top)
     }
 
     private var general: some View {

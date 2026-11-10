@@ -83,11 +83,14 @@ at(9.9) {
 at(10.35) {
   check(!delegate.window.isVisible, "전역 단축키 동작: 시계 창 숨기기")
   delegate.perform(.toggleClock)
-  t.forceNext(ids[2], Date().addingTimeInterval(-0.5)); t.tick()
   delegate.listWindow.show()
 }
+// 다른 창(목록 창)에 키보드가 있는 동안 울린다.
+at(10.9) { t.forceNext(ids[2], Date().addingTimeInterval(-0.5)); t.tick() }
 at(11.4) {
   check(delegate.window.isVisible && t.isRinging, "다시 보이기, 알람 울림")
+  check(delegate.listWindow.window?.isKeyWindow == true && !delegate.window.panel.isKeyWindow,
+        "울려도 키보드는 쓰던 창에 남음 (key: \(NSApp.keyWindow?.title ?? "nil"))")
   shot(delegate.listWindow.windowNumber, "list-ringing-\(lang)")
   delegate.perform(.stopRinging)
   check(!t.isRinging, "전역 단축키 동작: 울림 끄기")
