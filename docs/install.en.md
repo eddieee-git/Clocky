@@ -57,6 +57,15 @@ When you turn on **Settings → Calendar → Alert for Mac Calendar events**, ma
 
 ## Update
 
+Clocky checks GitHub for a new version once a day. When there is one, the menu bar menu shows **Get New Version, Clocky …**, and so does **Settings → General → Updates**. To check right away, choose **Check for Updates…** from the menu. You can turn off automatic checks in Settings.
+
+1. Choose **Get New Version…** → **Download**. Clocky saves `Clocky 0.x.x.dmg` to your Downloads folder and opens it. Clocky checks that the file matches the one on GitHub (SHA-256).
+2. Click **Quit Clocky** in the window that explains the next steps.
+3. In the window that opened, drag Clocky to the Applications folder to replace the old app, then open Clocky again.
+4. If the security warning appears again, allow it as above. If you use the Mac Calendar option, macOS may ask for calendar access again.
+
+Version 0.2.0 doesn't check for updates, so update from 0.2.0 by hand once:
+
 1. Click the menu bar icon → **Quit Clocky**.
 2. Open the new `Clocky.dmg` and drag Clocky to the Applications folder to replace the old app.
 3. If the security warning appears again, allow it as above. If you use the Mac Calendar option, macOS may ask for calendar access again.

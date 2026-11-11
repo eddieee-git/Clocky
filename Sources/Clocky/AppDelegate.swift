@@ -5,7 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings = ClockySettings()
     private(set) lazy var window = TimerWindowController(settings: settings)
     private(set) lazy var calendarSync = CalendarSync(settings: settings, store: window.store)
-    private(set) lazy var settingsWindow = SettingsWindowController(settings: settings, calendar: calendarSync)
+    private(set) lazy var updater = UpdateChecker(settings: settings)
+    private(set) lazy var settingsWindow = SettingsWindowController(settings: settings, calendar: calendarSync, updater: updater)
     private(set) lazy var listWindow: ListWindowController = {
         let model = ClockListModel(store: window.store, settings: settings)
         model.onReveal = { [weak self] id in self?.reveal(id) }
@@ -31,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildStatusMenu()
         window.panel.onOpenSettings = { [weak self] in self?.showSettings() }
         _ = calendarSync
+        // 새 버전을 찾으면 메뉴 맨 위에 알린다.
+        updater.$available.removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.rebuildStatusMenu() } }
+            .store(in: &subscriptions)
         window.panel.onOpenList = { [weak self] in self?.showList() }
 
         // 타이머가 도는 동안 메뉴바에 남은 시간을 띄운다.
@@ -108,6 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: L("전체 목록…"), action: #selector(showList), keyEquivalent: "l").target = self
         menu.addItem(withTitle: L("설정…"), action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
+        if let release = updater.available {
+            let item = menu.addItem(withTitle: L("새 버전 Clocky %@ 받기…", release.version), action: #selector(offerUpdate), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        } else {
+            menu.addItem(withTitle: L("업데이트 확인…"), action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        }
+        menu.addItem(.separator())
         menu.addItem(withTitle: L("Clocky 종료"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.delegate = self
         statusItem?.menu = menu
@@ -178,6 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .showList:
             showList()
         }
+    }
+
+    @objc private func offerUpdate() {
+        if let release = updater.available { updater.offer(release) }
+    }
+
+    @objc private func checkForUpdates() {
+        updater.checkAndReport()
     }
 
     @objc private func showWindow() {

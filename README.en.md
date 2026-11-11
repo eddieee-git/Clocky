@@ -38,7 +38,7 @@ Clocky keeps a small window on screen whose digit cards flip every second, like 
 >
 > Close the warning, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. You only need to do this once.
 
-See the [install guide](docs/install.en.md) for details, including how to update and uninstall.
+Clocky checks for a new version once a day and tells you in the menu bar menu. Click it to download and open the new dmg. See the [install guide](docs/install.en.md) for details, including how to update and uninstall.
 
 ## Using Clocky
 
@@ -109,7 +109,7 @@ Clocky refreshes every 15 minutes and when your Mac wakes. To refresh right away
 
 | Tab | Settings |
 |---|---|
-| General | Language, Open at Login, Confirm before deleting, menu bar countdowns |
+| General | Language, Open at Login, Confirm before deleting, menu bar countdowns, Check for Updates Automatically |
 | Timers & Alarms | Flash before ringing (off, 5, 10, 30, or 60 seconds), Snooze length (1–30 minutes), Keep ringing for (10 seconds–5 minutes), Timer buttons (minutes, up to 6) |
 | Sound | Alarm sound (plays when you pick it), add or remove your own sound files, Volume |
 | Calendar | Mac Calendar app and which calendars, add, turn on, or remove iCal addresses, Alert timing, all-day and declined events |
@@ -152,9 +152,9 @@ Global shortcuts work even while you're using other apps. Change or clear them i
 ## Privacy and security
 
 - Settings, alarms, and events stay on this Mac. Clocky has no third-party libraries and sends nothing anywhere.
-- Clocky uses the internet only to download events from the iCal addresses you add. It accepts https addresses only and hides the secret part on screen.
+- Clocky uses the internet only to download events from the iCal addresses you add and to check GitHub for a new version once a day. It accepts https iCal addresses only and hides the secret part on screen. You can turn off update checks in Settings.
 - Clocky asks for calendar access only when you turn on the Mac Calendar app option, and reads only each event's title, time, and your response.
-- The app is signed with the App Sandbox and the Hardened Runtime. Outside its own folder, it reads only sound files you pick in Settings. Settings are stored in `~/Library/Containers/com.eddieee.Clocky`.
+- The app is signed with the App Sandbox and the Hardened Runtime. Outside its own folder, it reads only sound files you pick in Settings, and when you choose to update, it saves the new dmg to your Downloads folder. Settings are stored in `~/Library/Containers/com.eddieee.Clocky`.
 
 ## Building from source
 

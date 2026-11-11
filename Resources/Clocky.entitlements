@@ -14,5 +14,8 @@
 	<!-- 설정에서 사용자가 직접 고른 소리 파일만 읽는다. -->
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>
+	<!-- 업데이트를 고르면 새 버전 dmg를 다운로드 폴더에 받는다. 그 밖에는 이 폴더를 읽지도 쓰지도 않는다. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
 </dict>
 </plist>

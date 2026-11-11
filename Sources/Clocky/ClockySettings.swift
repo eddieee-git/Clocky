@@ -31,6 +31,7 @@ final class ClockySettings: ObservableObject {
         static let calendarFeeds = "calendarFeeds", calendarLead = "calendarLeadMinutes"
         static let calendarAllDay = "calendarIncludeAllDay", calendarDeclined = "calendarIncludeDeclined"
         static let macCalendar = "macCalendarEnabled", macCalendarIDs = "macCalendarIDs"
+        static let checkForUpdates = "checkForUpdates"
     }
     static let warningChoices = [0, 5, 10, 30, 60]
     static let snoozeChoices = [1, 3, 5, 10, 15, 30]
@@ -92,6 +93,8 @@ final class ClockySettings: ObservableObject {
             if let macCalendarIDs { defaults.set(macCalendarIDs, forKey: Keys.macCalendarIDs) } else { defaults.removeObject(forKey: Keys.macCalendarIDs) }
         }
     }
+    /// 하루에 한 번 GitHub에 새 버전이 있는지 묻는다.
+    @Published var checkForUpdates: Bool { didSet { defaults.set(checkForUpdates, forKey: Keys.checkForUpdates) } }
     /// 다른 앱이 이미 쓰는 등의 이유로 등록하지 못한 단축키.
     @Published var failedHotKeys: Set<HotKeyAction> = []
     /// 단축키를 새로 누르는 동안에는 등록을 풀어 둔다. 그래야 지금 단축키도 다시 고를 수 있다.
@@ -122,6 +125,7 @@ final class ClockySettings: ObservableObject {
         calendarIncludeDeclined = defaults.bool(forKey: Keys.calendarDeclined)
         macCalendarEnabled = defaults.bool(forKey: Keys.macCalendar)
         macCalendarIDs = defaults.stringArray(forKey: Keys.macCalendarIDs)
+        checkForUpdates = defaults.object(forKey: Keys.checkForUpdates) as? Bool ?? true
         hotKeys = defaults.data(forKey: Keys.hotKeys).flatMap { try? JSONDecoder().decode([String: KeyCombo].self, from: $0) }
             ?? KeyCombo.defaults
         Localization.language = language
@@ -500,6 +504,36 @@ enum Localization {
         "%@ · %@ · 알림까지 %@": "%@ · %@ · alert in %@",
         "📅 %@ · %@ 시작 (알림까지 %@)": "📅 %@ · starts %@ (alert in %@)",
         "일정은 구글 캘린더에서 고칩니다. 알림 시점은 설정 → 캘린더에서 바꿉니다.": "Edit events in Google Calendar. Change when alerts ring in Settings → Calendar.",
+        // 업데이트
+        "업데이트": "Updates",
+        "업데이트 자동 확인": "Check for Updates Automatically",
+        "업데이트 확인…": "Check for Updates…",
+        "버전 %@": "Version %@",
+        "지금 확인": "Check Now",
+        "Clocky %@ 받기…": "Get Clocky %@…",
+        "새 버전 Clocky %@ 받기…": "Get New Version, Clocky %@…",
+        "새 버전 Clocky %@": "Clocky %@ Is Available",
+        "지금 쓰는 버전은 %@입니다.": "You have version %@.",
+        "다운로드": "Download",
+        "나중에": "Later",
+        "닫기": "Close",
+        "릴리스 페이지 열기": "Open Release Page",
+        "업데이트를 확인하지 못했습니다": "Couldn't Check for Updates",
+        "최신 버전입니다": "You're Up to Date",
+        "지금 쓰는 Clocky %@이 가장 새 버전입니다.": "Clocky %@ is the newest version.",
+        "릴리스 정보를 읽지 못했습니다.": "Couldn't read the release information.",
+        "이 릴리스에는 dmg 파일이 없습니다.": "This release has no dmg file.",
+        "다운로드 주소가 GitHub가 아닙니다.": "The download address isn't on GitHub.",
+        "파일이 너무 큽니다.": "The file is too large.",
+        "받은 파일이 GitHub에 올린 파일과 다릅니다. 지웠습니다.": "The downloaded file doesn't match the one on GitHub, so it was deleted.",
+        "다운로드하지 못했습니다.": "Couldn't download the file.",
+        "다운로드하지 못했습니다": "Couldn't Download the Update",
+        "다운로드한 Clocky를 열었습니다": "The New Clocky Is Open in Finder",
+        "Clocky를 종료한 뒤, 열린 창에서 Clocky를 Applications 폴더로 끌어 놓아 기존 것을 대체한 뒤 다시 여세요. 타이머와 알람은 그대로 남습니다.\n\n받은 파일: %@": "Quit Clocky, drag Clocky from the window that opened to the Applications folder, and replace the old one. Then open Clocky again. Your timers and alarms stay as they are.\n\nDownloaded file: %@",
+        "다운로드하는 중…": "Downloading…",
+        "확인하지 못했습니다: %@": "Couldn't check: %@",
+        "마지막 확인: %@": "Last checked: %@",
+        "GitHub에 새 버전이 있는지만 묻고, 아무것도 보내지 않습니다.": "Clocky only asks GitHub whether there's a new version and sends nothing about you.",
         // 편집 메뉴
         "편집": "Edit",
         "실행 취소": "Undo",
