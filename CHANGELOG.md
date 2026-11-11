@@ -4,7 +4,7 @@
 
 ## 한국어
 
-### 다음 버전
+### 0.2.1 — 업데이트 확인
 
 - 업데이트 확인: 하루에 한 번 GitHub에 새 버전이 있는지 묻고, 있으면 메뉴바 메뉴와 설정 → 일반에 알린다. 누르면 dmg를 다운로드 폴더에 받아 SHA-256을 확인하고 연다. 설정에서 끌 수 있다.
 
@@ -37,7 +37,7 @@
 
 ## English
 
-### Next version
+### 0.2.1 — Update checks
 
 - Update checks: once a day Clocky asks GitHub whether there's a new version and shows it in the menu bar menu and Settings → General. Click it to download the dmg to your Downloads folder, check its SHA-256, and open it. You can turn this off in Settings.
 
