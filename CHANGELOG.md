@@ -4,7 +4,7 @@
 
 ## 한국어
 
-### 다음 버전
+### 0.2.2 — 서명된 업데이트
 
 - 업데이트 서명: 새 버전은 만든 사람의 서명(Ed25519)이 맞을 때만 받는다. 버전도 함께 서명해 옛 파일을 새 버전으로 속이지 못한다. 서명이 없는 릴리스는 릴리스 페이지로 안내한다.
 - dmg 안에서 바로 실행하면 Applications 폴더로 옮기라고 알린다.
@@ -46,7 +46,7 @@
 
 ## English
 
-### Next version
+### 0.2.2 — Signed updates
 
 - Signed updates: Clocky downloads a new version only when its developer's signature (Ed25519) matches. The version is signed too, so an old file can't pass as a new version. For an unsigned release, Clocky points you to the release page.
 - If you open Clocky straight from the dmg, it asks you to move it to the Applications folder.

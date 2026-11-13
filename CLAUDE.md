@@ -65,6 +65,8 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 
 ## 정해 둔 것
 
+- GitHub 저장소의 비공개 취약점 신고(private vulnerability reporting)를 켜 두었다. SECURITY.md의 신고 경로가 이것을 쓴다.
+
 - iCal 비밀 주소는 키체인이 아니라 UserDefaults에 둔다. 임시 서명은 빌드마다 서명이 달라져, 키체인에 두면 업데이트할 때마다 macOS가 키체인 접근 암호를 묻기 때문이다. 대신 문서에 저장 위치와 백업에 들어간다는 점을 적었다.
 
 ## 남은 일
@@ -72,4 +74,3 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 - Mac 캘린더 앱 연동은 실제 캘린더로 아직 시험하지 못했다(다른 Mac에서 확인 예정).
 - macOS 13·14·15에서는 아직 실행해 보지 않았다.
 - Floaty(별도 저장소)의 README에 있는 Clocky 소개 문구는 Floaty 쪽에서 고친다.
-- GitHub 저장소 설정의 비공개 취약점 신고(private vulnerability reporting)가 꺼져 있으면 SECURITY.md의 신고 경로가 동작하지 않는다.
