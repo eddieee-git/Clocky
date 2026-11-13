@@ -29,7 +29,7 @@
 
 ## 설치
 
-1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky.dmg`를 내려받습니다.
+1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky-<버전>.dmg`(0.2.1까지는 `Clocky.dmg`)를 내려받습니다.
 2. dmg를 열고 Clocky를 Applications 폴더로 끌어다 놓습니다.
 3. Clocky를 실행합니다. 메뉴바에 자명종 아이콘이 생기고 시계 창이 뜹니다.
 
@@ -164,7 +164,7 @@ Xcode 없이 Command Line Tools만 있으면 됩니다.
 scripts/build-app.sh
 ```
 
-`build/Clocky.app`과 `build/Clocky.dmg`가 만들어집니다. 아이콘을 다시 그리려면 `swift scripts/make-icon.swift`를 실행합니다.
+`build/Clocky.app`과 `build/Clocky-<버전>.dmg`가 만들어집니다. 아이콘을 다시 그리려면 `swift scripts/make-icon.swift`를 실행합니다.
 
 시험은 Command Line Tools에 든 Swift Testing으로 돌립니다.
 

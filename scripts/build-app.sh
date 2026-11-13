@@ -1,10 +1,12 @@
 #!/bin/zsh
-# build/Clocky.app과 배포용 build/Clocky.dmg를 만든다. Xcode 없이 Command Line Tools만으로 빌드한다.
+# build/Clocky.app과 배포용 build/Clocky-<버전>.dmg(예: Clocky-0.2.2.dmg)를 만든다. Xcode 없이 Command Line Tools만으로 빌드한다.
 # Apple 실리콘 Mac 전용이다.
 set -e
 cd "$(dirname "$0")/.."
 
 swift build -c release --arch arm64
+version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
+dmg=build/Clocky-$version.dmg
 
 app=build/Clocky.app
 rm -rf "$app"
@@ -20,12 +22,12 @@ codesign --force --sign - --options runtime --entitlements Resources/Clocky.enti
 
 # 내려받은 쪽에서 응용 프로그램 폴더로 끌어다 놓을 수 있게 바로가기를 함께 넣는다.
 staging=build/dmg
-rm -rf "$staging" build/Clocky.dmg
+rm -rf "$staging" build/Clocky*.dmg
 mkdir -p "$staging"
 cp -R "$app" "$staging/"
 ln -s /Applications "$staging/Applications"
-hdiutil create -quiet -volname Clocky -srcfolder "$staging" -format UDZO build/Clocky.dmg
+hdiutil create -quiet -volname Clocky -srcfolder "$staging" -format UDZO "$dmg"
 rm -rf "$staging"
 
 echo "$app"
-echo build/Clocky.dmg
+echo "$dmg"

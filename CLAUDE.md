@@ -33,7 +33,7 @@
 ## 빌드와 시험
 
 ```bash
-scripts/build-app.sh          # build/Clocky.app, build/Clocky.dmg
+scripts/build-app.sh          # build/Clocky.app, build/Clocky-<버전>.dmg
 scripts/test.sh               # 단위 시험(Swift Testing)
 scripts/gui-test.sh           # 창을 띄우는 시험 전부. 이름을 주면 그것만: scripts/gui-test.sh update
 scripts/gui-test.sh readme-shots   # README 이미지를 build/shots에 찍는다(한국어·영어)
@@ -48,9 +48,9 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 
 1. Resources/Info.plist의 `CFBundleShortVersionString`(예: 0.2.1)과 `CFBundleVersion`(빌드 번호, 하나씩 올림)을 올린다.
 2. CHANGELOG.md의 한국어·영어 칸에 버전 제목과 바뀐 점을 적는다.
-3. `scripts/build-app.sh`로 dmg를 만들고 `shasum -a 256 build/Clocky.dmg`를 적어 둔다.
-4. 커밋하고 push한 뒤(사용자 허락이 있을 때), `gh release create vX.Y.Z build/Clocky.dmg --title "Clocky X.Y.Z" --notes-file <노트> --latest`.
-   - 파일 이름은 반드시 `Clocky.dmg`(앱이 `.dmg`로 끝나는 첫 파일을 받는다). 태그는 `v` + 버전. 초안·시험판은 앱이 무시한다.
+3. `scripts/build-app.sh`로 dmg를 만들고 `shasum -a 256 build/Clocky-X.Y.Z.dmg`를 적어 둔다.
+4. 커밋하고 push한 뒤(사용자 허락이 있을 때), `gh release create vX.Y.Z build/Clocky-X.Y.Z.dmg --title "Clocky X.Y.Z" --notes-file <노트> --latest`.
+   - 파일 이름은 `Clocky-X.Y.Z.dmg`(0.2.1까지는 `Clocky.dmg`). 앱은 `.dmg`로 끝나는 첫 파일을 받으므로 릴리스에 dmg는 하나만 올린다. 태그는 `v` + 버전. 초안·시험판은 앱이 무시한다.
    - 노트 첫머리 약 600자가 앱의 업데이트 창에 보이므로 바뀐 점을 맨 앞에 한국어·영어로 쓴다. 설치 방법과 SHA-256을 함께 적는다.
 5. `curl -s https://api.github.com/repos/eddieee-git/mac-app-clocky/releases/latest`로 태그와 dmg의 `digest`가 맞는지 확인한다.
 

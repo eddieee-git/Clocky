@@ -9,7 +9,7 @@
 
 ## Install
 
-1. Download `Clocky.dmg` from [Releases](https://github.com/eddieee-git/mac-app-clocky/releases).
+1. Download `Clocky-<version>.dmg` (`Clocky.dmg` up to 0.2.1) from [Releases](https://github.com/eddieee-git/mac-app-clocky/releases).
 2. Open the dmg and drag Clocky to the Applications folder.
 3. Eject the dmg.
 4. Open Clocky from the Applications folder.
@@ -19,7 +19,7 @@ Clocky doesn't add a Dock icon. If an alarm-clock icon appears in the menu bar a
 You can check the download against the SHA-256 value listed on the release:
 
 ```bash
-shasum -a 256 ~/Downloads/Clocky.dmg
+shasum -a 256 ~/Downloads/Clocky*.dmg
 ```
 
 ## The security warning on first launch
@@ -67,7 +67,7 @@ Clocky checks GitHub for a new version once a day. When there is one, the menu b
 Version 0.2.0 doesn't check for updates, so update from 0.2.0 by hand once:
 
 1. Click the menu bar icon → **Quit Clocky**.
-2. Open the new `Clocky.dmg` and drag Clocky to the Applications folder to replace the old app.
+2. Open the new `Clocky-<version>.dmg` and drag Clocky to the Applications folder to replace the old app.
 3. If the security warning appears again, allow it as above. If you use the Mac Calendar option, macOS may ask for calendar access again.
 
 Your settings, alarms, and connected calendars are stored separately from the app and stay as they are.

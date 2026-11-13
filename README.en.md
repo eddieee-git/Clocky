@@ -29,7 +29,7 @@ Clocky keeps a small window on screen whose digit cards flip every second, like 
 
 ## Install
 
-1. Download `Clocky.dmg` from [Releases](https://github.com/eddieee-git/mac-app-clocky/releases).
+1. Download `Clocky-<version>.dmg` (`Clocky.dmg` up to 0.2.1) from [Releases](https://github.com/eddieee-git/mac-app-clocky/releases).
 2. Open the dmg and drag Clocky to the Applications folder.
 3. Open Clocky. An alarm-clock icon appears in the menu bar and the clock window opens.
 
@@ -164,7 +164,7 @@ You only need the Command Line Tools, not Xcode.
 scripts/build-app.sh
 ```
 
-This creates `build/Clocky.app` and `build/Clocky.dmg`. To redraw the icon, run `swift scripts/make-icon.swift`.
+This creates `build/Clocky.app` and `build/Clocky-<version>.dmg`. To redraw the icon, run `swift scripts/make-icon.swift`.
 
 Run the tests with Swift Testing from the Command Line Tools:
 

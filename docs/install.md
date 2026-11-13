@@ -9,7 +9,7 @@
 
 ## 설치하기
 
-1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky.dmg`를 내려받습니다.
+1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky-<버전>.dmg`(0.2.1까지는 `Clocky.dmg`)를 내려받습니다.
 2. dmg를 열고 Clocky를 Applications 폴더로 끌어다 놓습니다.
 3. dmg를 꺼냅니다.
 4. Applications 폴더에서 Clocky를 실행합니다.
@@ -19,7 +19,7 @@
 릴리스에 적힌 SHA-256 값으로 내려받은 파일을 확인할 수 있습니다.
 
 ```bash
-shasum -a 256 ~/Downloads/Clocky.dmg
+shasum -a 256 ~/Downloads/Clocky*.dmg
 ```
 
 ## 처음 실행할 때 나오는 보안 경고
@@ -67,7 +67,7 @@ Clocky는 하루에 한 번 GitHub에 새 버전이 있는지 확인합니다. �
 0.2.0에는 업데이트 확인이 없으므로, 0.2.0에서는 한 번만 직접 받아서 바꿉니다.
 
 1. 메뉴바 아이콘 → **Clocky 종료**로 앱을 끕니다.
-2. 새 `Clocky.dmg`를 열고 Applications 폴더로 끌어다 놓아 기존 앱을 대체합니다.
+2. 새 `Clocky-<버전>.dmg`를 열고 Applications 폴더로 끌어다 놓아 기존 앱을 대체합니다.
 3. 보안 경고가 다시 나오면 위의 방법으로 허용합니다. Mac 캘린더 연동을 쓰고 있다면 캘린더 접근도 다시 물을 수 있습니다.
 
 설정, 알람, 연결한 캘린더는 앱과 따로 저장되므로 그대로 남습니다.
