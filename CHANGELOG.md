@@ -9,6 +9,9 @@
 - 업데이트 서명: 새 버전은 만든 사람의 서명(Ed25519)이 맞을 때만 받는다. 버전도 함께 서명해 옛 파일을 새 버전으로 속이지 못한다. 서명이 없는 릴리스는 릴리스 페이지로 안내한다.
 - dmg 안에서 바로 실행하면 Applications 폴더로 옮기라고 알린다.
 - 업데이트 확인과 개인정보 안내 문구를 정확하게 고쳤다(GitHub가 보는 것, iCal 주소가 저장되는 곳).
+- 새 버전으로 처음 켜면 받아 둔 dmg를 꺼내고 휴지통으로 옮길지 묻는다.
+- iCal 주소를 받을 때 크기를 세며 받아 너무 크면 중간에 멈추고, 서버가 ETag를 주면 바뀌었을 때만 받는다. 바뀌지 않은 일정은 디스크에 다시 쓰지 않는다.
+- 설치 안내에 문제 해결을 더하고, SECURITY.md와 이슈 양식을 만들었다.
 
 ### 0.2.1 — 업데이트 확인
 
@@ -48,6 +51,9 @@
 - Signed updates: Clocky downloads a new version only when its developer's signature (Ed25519) matches. The version is signed too, so an old file can't pass as a new version. For an unsigned release, Clocky points you to the release page.
 - If you open Clocky straight from the dmg, it asks you to move it to the Applications folder.
 - Clearer wording about update checks and privacy (what GitHub sees, where iCal addresses are stored).
+- The first time a new version opens, Clocky offers to eject the downloaded dmg and move it to the Trash.
+- iCal downloads stop early if a file is too large, and use ETag when the server provides one. Unchanged events aren't written to disk again.
+- Troubleshooting in the install guide, plus SECURITY.md and issue templates.
 
 ### 0.2.1 — Update checks
 

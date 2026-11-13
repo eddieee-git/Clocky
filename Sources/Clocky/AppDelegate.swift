@@ -55,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.buildMainMenu()
         }
 
+        // 새 버전으로 처음 켰으면 받아 둔 dmg를 정리할지 묻는다.
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            DispatchQueue.main.async { UpdateChecker.cleanUpAfterUpdate() }
+        }
         // dmg 안에서 바로 열었으면 Applications 폴더로 옮기라고 알린다.
         if Bundle.main.bundleURL.pathExtension == "app", InstallLocation.needsMove(Bundle.main.bundlePath) {
             DispatchQueue.main.async { InstallLocation.warn() }

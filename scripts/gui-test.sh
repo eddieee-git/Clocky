@@ -18,7 +18,16 @@ sed '/testTarget/d' Package.swift > "$work/Package.swift"
 scenarios=("$@")
 (( ${#scenarios} )) || scenarios=(basics restore keyboard windows calendar calendar-add update)
 failed=0
+skipped=()
+# 화면이 잠기면 클릭과 키가 창에 닿지 않고 스크린샷도 비므로, 이런 시나리오는 실패 대신 건너뛴다.
+needs_screen=(basics restore keyboard windows readme-shots)
+locked() { ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes' }
 for name in $scenarios; do
+    if (( ${needs_screen[(Ie)$name]} )) && locked; then
+        echo "== $name: 건너뜀(화면이 잠겨 있음 — 잠금을 풀고 다시 돌리세요)"
+        skipped+=($name)
+        continue
+    fi
     rm -f "$work"/Sources/Clocky/*.swift(N)
     for f in Sources/Clocky/*.swift; do
         [[ ${f:t} == main.swift ]] || sed 's/private(set) //g; s/private //g' "$f" > "$work/Sources/Clocky/${f:t}"
@@ -40,4 +49,5 @@ for name in $scenarios; do
         rm -rf "$home"
     done
 done
+(( ${#skipped} )) && echo "건너뛴 시나리오: ${skipped[*]}"
 exit $failed

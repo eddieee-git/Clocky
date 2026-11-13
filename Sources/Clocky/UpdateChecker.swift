@@ -319,6 +319,45 @@ final class UpdateChecker: ObservableObject {
         return .success(target)
     }
 
+    // MARK: 업데이트한 뒤
+
+    static let downloadedKey = "downloadedUpdate", lastRunKey = "lastRunVersion"
+
+    /// 새 버전으로 처음 켰으면, Clocky가 받아 둔 dmg를 꺼내고 휴지통으로 옮길지 묻는다.
+    /// 받은 파일이 없으면(직접 업데이트했으면) 아무것도 묻지 않는다. 정리할 파일을 돌려준다.
+    @discardableResult
+    static func cleanUpAfterUpdate(defaults: UserDefaults = .standard, current: String = AppVersion.current,
+                                   confirm: (URL) -> Bool = askToTrash, discard: (URL) -> Void = ejectAndTrash) -> URL? {
+        let last = defaults.string(forKey: lastRunKey)
+        defaults.set(current, forKey: lastRunKey)
+        guard let last, AppVersion.isNewer(current, than: last),
+              let path = defaults.string(forKey: downloadedKey) else { return nil }
+        defaults.removeObject(forKey: downloadedKey)
+        let file = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path), confirm(file) else { return nil }
+        discard(file)
+        return file
+    }
+
+    /// 열어 둔 dmg가 아직 붙어 있으면 먼저 꺼내고, 파일을 휴지통으로 옮긴다. 샌드박스가 꺼내기를 막으면 그대로 둔다.
+    private static func ejectAndTrash(_ file: URL) {
+        let volume = URL(fileURLWithPath: "/Volumes/Clocky")
+        if FileManager.default.fileExists(atPath: volume.path) {
+            try? NSWorkspace.shared.unmountAndEjectDevice(at: volume)
+        }
+        try? FileManager.default.trashItem(at: file, resultingItemURL: nil)
+    }
+
+    private static func askToTrash(_ file: URL) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L("Clocky를 %@ 버전으로 업데이트했습니다", AppVersion.current)
+        alert.informativeText = L("받아 둔 설치 파일은 이제 필요 없습니다: %@", file.lastPathComponent)
+        alert.addButton(withTitle: L("휴지통으로 옮기기"))
+        alert.addButton(withTitle: L("그대로 두기"))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     // MARK: 알림 창
 
     /// 새 버전을 알리고, 다운로드를 고르면 받아서 연다.
@@ -365,6 +404,8 @@ final class UpdateChecker: ObservableObject {
         download(release) { [weak self] result in
             switch result {
             case .success(let file):
+                // 새 버전을 처음 켤 때 정리하도록 받은 파일을 기억한다.
+                UserDefaults.standard.set(file.path, forKey: UpdateChecker.downloadedKey)
                 NSWorkspace.shared.open(file)
                 self?.explainInstall(file)
             case .failure(let error):

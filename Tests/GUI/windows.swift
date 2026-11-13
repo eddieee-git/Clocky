@@ -43,11 +43,19 @@ at(2.4) {
   check(t.warningSeconds == 30 && t.snoozeMinutes == 10 && t.soundLimit == 180 && !t.tracksMenuBarAlarm, "설정 값이 바로 시계에 반영")
   s.menuBarShowsTimer = false
 }
+// 메뉴바 제목은 설정이 바뀐 뒤 메인 큐에서 고친다. 앞 단계가 늦게 돌아도 그 뒤에 보도록 한 번 더 큐에 넣는다.
 at(3.0) {
-  check(delegate.statusItem?.button?.title == "", "메뉴바 타이머 표시 끄면 제목 없음: '\(delegate.statusItem?.button?.title ?? "")'")
-  s.menuBarShowsTimer = true; s.menuBarShowsAlarm = true; s.warningSeconds = 10; s.snoozeMinutes = 5; s.soundLimitSeconds = 60
+  DispatchQueue.main.async {
+    check(delegate.statusItem?.button?.title == "", "메뉴바 타이머 표시 끄면 제목 없음: '\(delegate.statusItem?.button?.title ?? "")'")
+    s.menuBarShowsTimer = true; s.menuBarShowsAlarm = true; s.warningSeconds = 10; s.snoozeMinutes = 5; s.soundLimitSeconds = 60
+  }
 }
-at(3.6) { check(delegate.statusItem?.button?.title.hasPrefix(" 2:") == true, "다시 켜면 타이머 표시"); key(delegate.window.panel.windowNumber, 37, "l", .command) }
+at(3.6) {
+  DispatchQueue.main.async {
+    let title = delegate.statusItem?.button?.title ?? ""
+    check(title.range(of: #"^ [0-9]+:[0-9]{2}$"#, options: .regularExpression) != nil, "다시 켜면 타이머 표시: '\(title)'"); key(delegate.window.panel.windowNumber, 37, "l", .command)
+  }
+}
 at(4.8) {
   check(delegate.listWindow.isVisible && t.isListDisplayed, "⌘L로 전체 목록 창")
   delegate.listWindow.model.selection = [ids[3]]

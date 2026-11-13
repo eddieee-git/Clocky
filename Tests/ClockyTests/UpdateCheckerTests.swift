@@ -107,3 +107,49 @@ private func json(tag: String = "v0.3.0", draft: Bool = false, prerelease: Bool 
         #expect(!InstallLocation.needsMove("/Users/me/Applications/Clocky.app"))
     }
 }
+
+@Suite struct AfterUpdateTests {
+    private func fresh() -> UserDefaults {
+        let name = "clocky-after-update-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test func 새_버전으로_처음_켜면_받은_dmg를_정리한다() throws {
+        let defaults = fresh()
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("Clocky \(UUID().uuidString).dmg")
+        try Data([1, 2, 3]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        defaults.set("0.2.1", forKey: UpdateChecker.lastRunKey)
+        defaults.set(file.path, forKey: UpdateChecker.downloadedKey)
+        var asked: URL?
+        let cleaned = UpdateChecker.cleanUpAfterUpdate(defaults: defaults, current: "0.2.2") { asked = $0; return true } discard: { try? FileManager.default.removeItem(at: $0) }
+        #expect(asked == file && cleaned == file)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(defaults.string(forKey: UpdateChecker.lastRunKey) == "0.2.2")
+        #expect(defaults.string(forKey: UpdateChecker.downloadedKey) == nil)
+    }
+
+    @Test func 처음_설치했거나_같은_버전이거나_거절하면_묻지_않거나_남긴다() throws {
+        var asked = 0
+        // 처음 설치: 지난 버전 기록이 없다.
+        let first = fresh()
+        first.set("/tmp/x.dmg", forKey: UpdateChecker.downloadedKey)
+        #expect(UpdateChecker.cleanUpAfterUpdate(defaults: first, current: "0.2.2") { _ in asked += 1; return true } discard: { _ in } == nil)
+        // 같은 버전을 다시 켬
+        let same = fresh()
+        same.set("0.2.2", forKey: UpdateChecker.lastRunKey)
+        #expect(UpdateChecker.cleanUpAfterUpdate(defaults: same, current: "0.2.2") { _ in asked += 1; return true } discard: { _ in } == nil)
+        #expect(asked == 0)
+        // 그대로 두기를 고르면 파일이 남는다.
+        let keep = fresh()
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("Clocky \(UUID().uuidString).dmg")
+        try Data([1]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        keep.set("0.2.1", forKey: UpdateChecker.lastRunKey)
+        keep.set(file.path, forKey: UpdateChecker.downloadedKey)
+        #expect(UpdateChecker.cleanUpAfterUpdate(defaults: keep, current: "0.2.2") { _ in false } discard: { _ in } == nil)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+}

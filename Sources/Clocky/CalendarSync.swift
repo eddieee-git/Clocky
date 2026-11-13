@@ -53,6 +53,8 @@ final class CalendarSync: ObservableObject {
     private let store: ClockStore
     private let session: URLSession
     private var texts: [UUID: String] = [:]
+    /// 서버가 준 ETag. 앱을 다시 켜면 처음 한 번은 전부 받는다.
+    private var etags: [UUID: String] = [:]
     private var timer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
     private var wakeObserver: NSObjectProtocol?
@@ -152,6 +154,7 @@ final class CalendarSync: ObservableObject {
         for id in texts.keys where !ids.contains(id) {
             texts[id] = nil
             statuses[id] = nil
+            etags[id] = nil
             try? FileManager.default.removeItem(at: Self.cacheURL(id))
         }
         recompute()
@@ -173,41 +176,14 @@ final class CalendarSync: ObservableObject {
                 pending -= 1
                 continue
             }
-            session.dataTask(with: url) { [weak self] data, response, error in
-                let text: String?
-                let failure: String?
-                if let error {
-                    text = nil
-                    failure = error.localizedDescription
-                } else if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    text = nil
-                    failure = http.statusCode == 404 ? L("주소를 찾을 수 없습니다. 비공개 주소를 다시 복사해 주세요.")
-                                                     : L("서버 응답 %d", http.statusCode)
-                } else if let data, data.count <= Self.maxBytes,
-                          let body = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1),
-                          body.contains("BEGIN:VCALENDAR") {
-                    text = body
-                    failure = nil
-                } else {
-                    text = nil
-                    failure = L("iCal 형식이 아닙니다.")
-                }
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if let text {
-                        self.texts[feed.id] = text
-                        try? FileManager.default.createDirectory(at: Self.cacheFolder, withIntermediateDirectories: true)
-                        try? text.write(to: Self.cacheURL(feed.id), atomically: true, encoding: .utf8)
-                        self.statuses[feed.id, default: Status()].lastSuccess = Date()
-                        self.statuses[feed.id, default: Status()].error = nil
-                    } else {
-                        self.statuses[feed.id, default: Status()].error = failure
-                    }
-                    pending -= 1
-                    self.recompute()
-                    if pending <= 0 && current == self.generation { self.isRefreshing = false }
-                }
-            }.resume()
+            let etag = etags[feed.id]
+            Self.fetch(url, etag: etag, session: session) { [weak self] result in
+                guard let self else { return }
+                self.apply(result, to: feed.id)
+                pending -= 1
+                self.recompute()
+                if pending <= 0 && current == self.generation { self.isRefreshing = false }
+            }
         }
         if pending <= 0 { isRefreshing = false }
     }
@@ -244,6 +220,78 @@ final class CalendarSync: ObservableObject {
             macEventCount = 0
         }
         store.setCalendarEvents(events.sorted { $0.start < $1.start })
+    }
+
+    private func apply(_ result: FetchResult, to id: UUID) {
+        switch result {
+        case .notModified:
+            statuses[id, default: Status()].lastSuccess = Date()
+            statuses[id, default: Status()].error = nil
+        case .text(let text, let newTag):
+            etags[id] = newTag
+            // 바뀌지 않았으면 디스크에 다시 쓰지 않는다.
+            if texts[id] != text {
+                texts[id] = text
+                try? FileManager.default.createDirectory(at: Self.cacheFolder, withIntermediateDirectories: true)
+                try? text.write(to: Self.cacheURL(id), atomically: true, encoding: .utf8)
+            }
+            statuses[id, default: Status()].lastSuccess = Date()
+            statuses[id, default: Status()].error = nil
+        case .failure(let message):
+            statuses[id, default: Status()].error = message
+        }
+    }
+
+    /// 받은 결과를 메인 스레드에서 넘긴다.
+    static func fetch(_ url: URL, etag: String?, session: URLSession, completion: @escaping (FetchResult) -> Void) {
+        Task {
+            let result = await fetch(url, etag: etag, session: session)
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    enum FetchResult: Equatable {
+        case text(String, etag: String?)
+        case notModified
+        case failure(String)
+    }
+
+    /// 주소 하나를 받는다. 서버가 ETag를 주면 다음에는 바뀌었을 때만 받는다(구글은 주지 않는다).
+    /// 받는 동안 크기를 세어 너무 크면 끝까지 받지 않고 멈춘다.
+    static func fetch(_ url: URL, etag: String?, session: URLSession) async -> FetchResult {
+        var request = URLRequest(url: url)
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            if let http = response as? HTTPURLResponse {
+                if http.statusCode == 304 { return .notModified }
+                guard (200..<300).contains(http.statusCode) else {
+                    return .failure(http.statusCode == 404 ? L("주소를 찾을 수 없습니다. 비공개 주소를 다시 복사해 주세요.")
+                                                          : L("서버 응답 %d", http.statusCode))
+                }
+            }
+            if response.expectedContentLength > Int64(maxBytes) { return .failure(L("파일이 너무 큽니다.")) }
+            var data = Data()
+            data.reserveCapacity(max(0, min(Int(response.expectedContentLength), maxBytes)))
+            var chunk = [UInt8]()
+            chunk.reserveCapacity(64 * 1024)
+            for try await byte in bytes {
+                chunk.append(byte)
+                if chunk.count == 64 * 1024 {
+                    data.append(contentsOf: chunk)
+                    chunk.removeAll(keepingCapacity: true)
+                    if data.count > maxBytes { return .failure(L("파일이 너무 큽니다.")) }
+                }
+            }
+            data.append(contentsOf: chunk)
+            guard data.count <= maxBytes else { return .failure(L("파일이 너무 큽니다.")) }
+            guard let body = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1),
+                  body.contains("BEGIN:VCALENDAR") else { return .failure(L("iCal 형식이 아닙니다.")) }
+            let tag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+            return .text(body, etag: tag)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
     }
 
     /// 화면에 보일 캘린더 이름: 직접 붙인 이름 → 받아 온 이름 → 가린 주소.

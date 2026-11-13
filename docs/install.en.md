@@ -35,7 +35,7 @@ The first time you open Clocky after downloading it, macOS blocks it and shows a
 3. Scroll down to **Security** and click **Open Anyway** next to the message about Clocky.
 4. In the confirmation, click **Open Anyway** again and approve with your Mac password or Touch ID.
 
-You only need to do this once. You may need to do it again after installing a new version.
+You only need to do this once. You may need to do it again after installing a new version. The **Open Anyway** button only appears for about an hour after you try to open Clocky.
 
 ### Option 2: Terminal
 
@@ -70,7 +70,45 @@ Version 0.2.0 doesn't check for updates, so update from 0.2.0 by hand once:
 2. Open the new `Clocky-<version>.dmg` and drag Clocky to the Applications folder to replace the old app.
 3. If the security warning appears again, allow it as above. If you use the Mac Calendar option, macOS may ask for calendar access again.
 
-Your settings, alarms, and connected calendars are stored separately from the app and stay as they are.
+Your settings, alarms, and connected calendars are stored separately from the app and stay as they are. If Clocky downloaded the dmg, the new version asks whether to move it to the Trash the first time it opens.
+
+## Troubleshooting
+
+**A security warning appears and Clocky won't open**
+Follow [The security warning on first launch](#the-security-warning-on-first-launch) above. The **Open Anyway** button only appears for about an hour after you try to open Clocky. If it isn't there, open Clocky once more to show the warning, then go back.
+
+**"Move Clocky to the Applications Folder" appears**
+You opened Clocky straight from the dmg window. Quit Clocky, drag it to the Applications folder, and open it from there. Then it keeps running after you eject the dmg, and Open at Login works.
+
+**The menu bar icon isn't there**
+With many menu bar icons, Clocky's can hide behind the notch or other icons. Press ⌃⌥C to open the clock window. On macOS 26 and later, also check that Clocky is allowed in **System Settings → Menu Bar**.
+
+**There's no sound**
+- Check that your Mac isn't muted and that sound isn't going to another device, such as Bluetooth headphones.
+- In **Settings → Sound**, check the volume and click ▶︎ to listen.
+- The sound stops after the set time (1 minute by default). The window keeps flashing until you stop it.
+
+**An alarm didn't ring**
+- Clocky can't ring while the lid is closed or your Mac is asleep. When it wakes, alarms that passed less than an hour earlier ring right away (15 minutes for calendar alerts).
+- Clocky can't ring while it's quit. Turn on Open at Login.
+- Check the alarm's **On** switch and its repeat days.
+
+**Calendar events don't appear**
+- In **Settings → Calendar**, look for an error next to the address. If it says the address can't be found, copy the secret address again.
+- For the Mac Calendar option, Clocky must be turned on in **System Settings → Privacy & Security → Calendars**, and the calendar must be checked in Clocky's settings.
+- Only events in the next two days appear. All-day and declined events are left out by default.
+- iCal addresses refresh every 15 minutes. Click **Refresh Now** to refresh right away.
+
+**macOS asks for calendar access again after an update**
+Clocky is signed without a developer certificate, so macOS may treat a new version as a different app. Allow access again.
+
+**Checking for updates fails**
+Check your internet connection. A work network may block GitHub. In that case, download the new version from the [Releases page](https://github.com/eddieee-git/mac-app-clocky/releases).
+
+**A global shortcut doesn't work**
+It isn't registered if another app uses the same keys. Check **Settings → Shortcuts** and pick different keys.
+
+If something still isn't working, open an [issue](https://github.com/eddieee-git/mac-app-clocky/issues). Include your macOS version and what happened.
 
 ## Uninstall
 

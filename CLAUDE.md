@@ -41,7 +41,8 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 ```
 
 - GUI 시험은 소스를 임시 폴더에 복사해 `private`를 풀고, 번들 없는 "Clocky" 설정 도메인으로 돈다. 실제 앱 설정에는 손대지 않는다.
-- **화면이 잠겨 있으면 클릭이 창에 닿지 않아 `windows` 등이 실패한다.** 부하가 크면 시간에 민감한 확인이 가끔 실패하므로 다시 돌려 본다.
+- 화면이 잠겨 있으면 클릭·키·스크린샷이 필요한 `basics`, `restore`, `keyboard`, `windows`, `readme-shots`는 건너뛴다(잠금을 풀고 다시 돌린다). 부하가 크면 시간에 민감한 확인이 가끔 실패하므로 다시 돌려 본다.
+- 단위 시험은 실제 사용자 폴더(다운로드, 휴지통)를 건드리지 않게 파일 처리를 주입해서 쓴다.
 - 다시 설치: `osascript -e 'quit app "Clocky"'` → `rm -rf /Applications/Clocky.app` → `cp -R build/Clocky.app /Applications/` → `open /Applications/Clocky.app`.
 
 ## 릴리스
@@ -71,3 +72,4 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 - Mac 캘린더 앱 연동은 실제 캘린더로 아직 시험하지 못했다(다른 Mac에서 확인 예정).
 - macOS 13·14·15에서는 아직 실행해 보지 않았다.
 - Floaty(별도 저장소)의 README에 있는 Clocky 소개 문구는 Floaty 쪽에서 고친다.
+- GitHub 저장소 설정의 비공개 취약점 신고(private vulnerability reporting)가 꺼져 있으면 SECURITY.md의 신고 경로가 동작하지 않는다.

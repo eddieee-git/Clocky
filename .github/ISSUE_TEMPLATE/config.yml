@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 보안 문제 · Security issue
+    url: https://github.com/eddieee-git/mac-app-clocky/security/advisories/new
+    about: 공개하지 말고 비공개로 알려 주세요 · Report privately, not in a public issue
+  - name: 설치와 문제 해결 · Install and troubleshooting
+    url: https://github.com/eddieee-git/mac-app-clocky/blob/main/docs/install.md#문제-해결
+    about: 보안 경고, 소리, 캘린더 등 자주 묻는 것 · Security warning, sound, calendars, and more

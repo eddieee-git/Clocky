@@ -38,7 +38,7 @@ Clocky keeps a small window on screen whose digit cards flip every second, like 
 >
 > Close the warning, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. You only need to do this once.
 
-Clocky checks for a new version once a day and tells you in the menu bar menu. Click it to download and open the new dmg. See the [install guide](docs/install.en.md) for details, including how to update and uninstall.
+Clocky checks for a new version once a day and tells you in the menu bar menu. Click it to download and open the new dmg. See the [install guide](docs/install.en.md) for details, including how to update, [troubleshoot](docs/install.en.md#troubleshooting), and uninstall.
 
 ## Using Clocky
 
@@ -158,6 +158,8 @@ Global shortcuts work even while you're using other apps. Change or clear them i
 - Clocky asks for calendar access only when you turn on the Mac Calendar app option, and reads only each event's title, time, and your response.
 - The app is signed with the App Sandbox and the Hardened Runtime. Outside its own folder, it reads only sound files you pick in Settings, and when you choose to update, it saves the new dmg to your Downloads folder. Settings are stored in `~/Library/Containers/com.eddieee.Clocky`.
 
+If you find a security problem, please report it privately as described in [SECURITY.md](SECURITY.md).
+
 ## Building from source
 
 You only need the Command Line Tools, not Xcode.
@@ -174,7 +176,7 @@ Run the tests with Swift Testing from the Command Line Tools:
 scripts/test.sh
 ```
 
-GUI tests that open real windows run with `scripts/gui-test.sh`. Each scenario in `Tests/GUI` is built and run on its own. The `calendar` scenario starts a small web server on your Mac and checks everything from downloading to ringing, the `update` scenario checks finding and downloading a new version from a server that mimics GitHub Releases, and `readme-shots` takes the screenshots for these docs in `build/shots`. Some scenarios fail while the screen is locked, because clicks can't reach the windows.
+GUI tests that open real windows run with `scripts/gui-test.sh`. Each scenario in `Tests/GUI` is built and run on its own. The `calendar` scenario starts a small web server on your Mac and checks everything from downloading to ringing, the `update` scenario checks finding and downloading a new version from a server that mimics GitHub Releases, and `readme-shots` takes the screenshots for these docs in `build/shots`. While the screen is locked, clicks and keys can't reach the windows, so those scenarios are skipped and listed at the end.
 
 ```bash
 scripts/gui-test.sh

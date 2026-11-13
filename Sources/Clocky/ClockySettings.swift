@@ -536,6 +536,10 @@ enum Localization {
         "확인하지 못했습니다: %@": "Couldn't check: %@",
         "마지막 확인: %@": "Last checked: %@",
         "GitHub에 새 버전이 있는지만 묻습니다. 일정이나 설정은 보내지 않고, GitHub는 여느 웹 요청처럼 IP 주소와 Clocky 버전을 봅니다.": "Clocky only asks GitHub whether there's a new version. It doesn't send your events or settings; like any web request, GitHub sees your IP address and Clocky's version.",
+        "Clocky를 %@ 버전으로 업데이트했습니다": "Clocky Was Updated to Version %@",
+        "받아 둔 설치 파일은 이제 필요 없습니다: %@": "You no longer need the downloaded installer: %@",
+        "휴지통으로 옮기기": "Move to Trash",
+        "그대로 두기": "Keep",
         // 설치 위치
         "Clocky를 Applications 폴더로 옮겨 주세요": "Move Clocky to the Applications Folder",
         "지금 디스크 이미지(dmg)에서 바로 실행하고 있습니다. 이대로는 dmg를 꺼내면 Clocky도 꺼지고, 로그인 시 자동 실행도 되지 않습니다.\n\nClocky를 종료한 뒤 dmg 창에서 Clocky를 Applications 폴더로 끌어 놓고, Applications 폴더에서 다시 여세요.": "Clocky is running straight from the disk image (dmg). If you eject the dmg, Clocky quits, and Open at Login won't work.\n\nQuit Clocky, drag it from the dmg window to the Applications folder, and open it from there.",

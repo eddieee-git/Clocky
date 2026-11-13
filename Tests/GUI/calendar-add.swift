@@ -37,7 +37,6 @@ at(2.5) {
   alertButton(L("추가"))?.performClick(nil)
 }
 at(3.0) {
-  check(delegate.settings.calendarFeeds.map(\.url) == [address], "추가 단추로 들어감: \(delegate.settings.calendarFeeds.map(\.url))")
   NSPasteboard.general.clearContents(); NSPasteboard.general.setString("그냥 글", forType: .string)
   CalendarAddPrompt.run(sync: delegate.calendarSync)
 }
@@ -53,7 +52,9 @@ at(4.6) {
   alertButton(L("취소"))?.performClick(nil)
 }
 at(5.2) {
-  check(alertWindow == nil && delegate.settings.calendarFeeds.count == 1, "취소하면 닫힘")
+  check(alertWindow == nil, "취소하면 닫힘")
+  // 팝업이 닫힌 뒤에야 주소가 들어가므로 마지막에 한 번에 본다. 잘못된 주소는 들어가지 않는다.
+  check(delegate.settings.calendarFeeds.map(\.url) == [address], "추가 단추로 들어감: \(delegate.settings.calendarFeeds.map(\.url))")
   if let w = NSApp.windows.first(where: { $0.title == L("Clocky 설정") }) { shot(w, "settings-calendar-added-\(lang)") }
   print(failures == 0 ? "ALL PASS" : "FAILURES: \(failures)")
   UserDefaults.standard.removePersistentDomain(forName: "Clocky")
