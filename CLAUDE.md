@@ -48,11 +48,23 @@ swift scripts/make-icon.swift # 앱 아이콘 다시 그리기
 
 1. Resources/Info.plist의 `CFBundleShortVersionString`(예: 0.2.1)과 `CFBundleVersion`(빌드 번호, 하나씩 올림)을 올린다.
 2. CHANGELOG.md의 한국어·영어 칸에 버전 제목과 바뀐 점을 적는다.
-3. `scripts/build-app.sh`로 dmg를 만들고 `shasum -a 256 build/Clocky-X.Y.Z.dmg`를 적어 둔다.
-4. 커밋하고 push한 뒤(사용자 허락이 있을 때), `gh release create vX.Y.Z build/Clocky-X.Y.Z.dmg --title "Clocky X.Y.Z" --notes-file <노트> --latest`.
+3. `scripts/build-app.sh`로 dmg를 만든다. 서명 키가 있으면 `build/Clocky-X.Y.Z.dmg.sig`도 함께 만든다(없으면 경고). `shasum -a 256 build/Clocky-X.Y.Z.dmg`를 적어 둔다.
+4. 커밋하고 push한 뒤(사용자 허락이 있을 때), `gh release create vX.Y.Z build/Clocky-X.Y.Z.dmg build/Clocky-X.Y.Z.dmg.sig --title "Clocky X.Y.Z" --notes-file <노트> --latest`.
+   - **0.2.2부터 앱은 `.sig`가 없거나 서명이 맞지 않는 릴리스는 받지 않는다.** `.sig`를 꼭 함께 올린다.
    - 파일 이름은 `Clocky-X.Y.Z.dmg`(0.2.1까지는 `Clocky.dmg`). 앱은 `.dmg`로 끝나는 첫 파일을 받으므로 릴리스에 dmg는 하나만 올린다. 태그는 `v` + 버전. 초안·시험판은 앱이 무시한다.
    - 노트 첫머리 약 600자가 앱의 업데이트 창에 보이므로 바뀐 점을 맨 앞에 한국어·영어로 쓴다. 설치 방법과 SHA-256을 함께 적는다.
 5. `curl -s https://api.github.com/repos/eddieee-git/mac-app-clocky/releases/latest`로 태그와 dmg의 `digest`가 맞는지 확인한다.
+
+## 릴리스 서명 키
+
+- Ed25519 비밀키는 저장소 밖 `~/.clocky-release/signing-key`(권한 600)에 있다. 공개키는 `UpdateChecker.releasePublicKey`에 들어 있다.
+- `swift scripts/release-key.swift public`은 공개키를 보여 준다(없으면 새로 만든다). `sign <dmg> <버전>`은 `<dmg>.sig`를 만든다. 서명 내용은 `clocky-release:<버전>:<dmg SHA-256>`.
+- **키를 잃어버리면 이미 배포한 앱이 새 버전을 받지 못한다.** 안전한 곳(암호 관리자 등)에 백업하고, 다른 Mac에서 릴리스하려면 같은 자리에 복사한다. 키를 바꾸면 사용자는 한 번 직접 업데이트해야 한다.
+- 단위 시험 `서명_스크립트와_앱의_공개키가_맞다`는 키가 있는 Mac에서만 돌며, 앱의 공개키가 비밀키와 짝인지 확인한다.
+
+## 정해 둔 것
+
+- iCal 비밀 주소는 키체인이 아니라 UserDefaults에 둔다. 임시 서명은 빌드마다 서명이 달라져, 키체인에 두면 업데이트할 때마다 macOS가 키체인 접근 암호를 묻기 때문이다. 대신 문서에 저장 위치와 백업에 들어간다는 점을 적었다.
 
 ## 남은 일
 

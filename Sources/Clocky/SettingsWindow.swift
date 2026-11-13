@@ -674,7 +674,7 @@ struct UpdateSection: View {
         } else if let lastCheck = updater.lastCheck {
             lines.append(L("마지막 확인: %@", lastCheck.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(settings.locale))))
         }
-        lines.append(L("GitHub에 새 버전이 있는지만 묻고, 아무것도 보내지 않습니다."))
+        lines.append(L("GitHub에 새 버전이 있는지만 묻습니다. 일정이나 설정은 보내지 않고, GitHub는 여느 웹 요청처럼 IP 주소와 Clocky 버전을 봅니다."))
         return lines.joined(separator: "\n")
     }
 }

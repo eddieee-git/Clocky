@@ -151,8 +151,10 @@ Global shortcuts work even while you're using other apps. Change or clear them i
 
 ## Privacy and security
 
-- Settings, alarms, and events stay on this Mac. Clocky has no third-party libraries and sends nothing anywhere.
-- Clocky uses the internet only to download events from the iCal addresses you add and to check GitHub for a new version once a day. It accepts https iCal addresses only and hides the secret part on screen. You can turn off update checks in Settings.
+- Settings, alarms, and events stay on this Mac and aren't sent anywhere. Clocky has no third-party libraries.
+- Clocky uses the internet only to download events from the iCal addresses you add and to check GitHub for a new version once a day. It accepts https iCal addresses only and hides the secret part on screen. When Clocky checks for updates, GitHub sees your IP address and Clocky's version, as with any web request. You can turn off update checks in Settings.
+- Secret iCal addresses are stored in Clocky's settings file. macOS keeps other apps from reading it, but backups such as Time Machine include it.
+- Clocky downloads and opens a new version only when its developer's signature (Ed25519) matches. Even if someone took over the GitHub account and replaced the file, Clocky wouldn't download it.
 - Clocky asks for calendar access only when you turn on the Mac Calendar app option, and reads only each event's title, time, and your response.
 - The app is signed with the App Sandbox and the Hardened Runtime. Outside its own folder, it reads only sound files you pick in Settings, and when you choose to update, it saves the new dmg to your Downloads folder. Settings are stored in `~/Library/Containers/com.eddieee.Clocky`.
 

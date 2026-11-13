@@ -1,7 +1,7 @@
 import AppKit
 import CryptoKit
 import SwiftUI
-// 이 Mac 안의 작은 웹 서버를 GitHub 릴리스처럼 쓰고, 새 버전 찾기부터 dmg 받기와 SHA-256 확인까지 본다.
+// 이 Mac 안의 작은 웹 서버를 GitHub 릴리스처럼 쓰고, 새 버전 찾기부터 dmg 받기와 SHA-256·서명 확인까지 본다.
 UserDefaults.standard.removePersistentDomain(forName: "Clocky")
 setvbuf(stdout, nil, _IONBF, 0)
 let shots = CommandLine.arguments[1]
@@ -12,15 +12,24 @@ let base = "http://127.0.0.1:\(port)"
 UserDefaults.standard.set(lang, forKey: "language"); UserDefaults.standard.set(true, forKey: "hasLaunched")
 UserDefaults.standard.set("0.2.0", forKey: "debugAppVersion")
 UserDefaults.standard.set("\(base)/latest.json", forKey: "debugUpdateURL")
+// 시험용 서명 키. 앱이 이 공개키를 믿게 한다.
+let testKey = Curve25519.Signing.PrivateKey()
+UserDefaults.standard.set(testKey.publicKey.rawRepresentation.base64EncodedString(), forKey: "debugUpdatePublicKey")
 
 let folder = FileManager.default.temporaryDirectory.appendingPathComponent("clocky-update-\(UUID().uuidString)")
 let downloads = folder.appendingPathComponent("Downloads")
 try! FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 let dmg = Data((0..<50_000).map { UInt8($0 % 251) })
-try! dmg.write(to: folder.appendingPathComponent("Clocky.dmg"))
+try! dmg.write(to: folder.appendingPathComponent("Clocky-0.3.0.dmg"))
 let sha = SHA256.hash(data: dmg).map { String(format: "%02x", $0) }.joined()
+func sign(_ version: String) -> String {
+  try! testKey.signature(for: UpdateChecker.signedMessage(version: version, sha256: sha)).base64EncodedString()
+}
+try! sign("0.3.0").write(to: folder.appendingPathComponent("Clocky-0.3.0.dmg.sig"), atomically: true, encoding: .utf8)
+// 옛 버전에 붙였던 서명을 새 버전에 그대로 붙인 경우
+try! sign("0.2.9").write(to: folder.appendingPathComponent("old.sig"), atomically: true, encoding: .utf8)
 func release(_ tag: String, digest: String) -> String {
-  ##"{"tag_name":"\##(tag)","html_url":"https://github.com/eddieee-git/mac-app-clocky/releases/tag/\##(tag)","body":"새 기능 · New\r\n- **업데이트 확인**","draft":false,"prerelease":false,"assets":[{"name":"Clocky.dmg","browser_download_url":"\##(base)/Clocky.dmg","digest":"sha256:\##(digest)"}]}"##
+  ##"{"tag_name":"\##(tag)","html_url":"https://github.com/eddieee-git/mac-app-clocky/releases/tag/\##(tag)","body":"새 기능 · New\r\n- **업데이트 확인**","draft":false,"prerelease":false,"assets":[{"name":"Clocky-0.3.0.dmg","browser_download_url":"\##(base)/Clocky-0.3.0.dmg","digest":"sha256:\##(digest)"},{"name":"Clocky-0.3.0.dmg.sig","browser_download_url":"\##(base)/Clocky-0.3.0.dmg.sig"}]}"##
 }
 try! release("v0.3.0", digest: sha).write(to: folder.appendingPathComponent("latest.json"), atomically: true, encoding: .utf8)
 try! release("v0.2.0", digest: sha).write(to: folder.appendingPathComponent("same.json"), atomically: true, encoding: .utf8)
@@ -78,7 +87,18 @@ at(10.0) {
     check(result == .failure(.checksum), "SHA-256이 다르면 실패: \(result)")
     let files = (try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) ?? []
     check(files.count == 2, "잘못 받은 파일은 남지 않음: \(files)")
+    // 받는 중에는 다음 받기를 시작하지 않으므로 끝난 뒤 잇는다.
+    var replayed = u.available!
+    replayed.signatureURL = URL(string: "\(base)/old.sig")
+    u.download(replayed, to: downloads) { result in
+      check(result == .failure(.badSignature), "다른 버전의 서명은 거부: \(result)")
+      let files = (try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) ?? []
+      check(files.count == 2, "서명이 틀린 파일도 남지 않음: \(files)")
+    }
   }
+  var unsigned = u.available!
+  unsigned.signatureURL = nil
+  u.download(unsigned, to: downloads) { result in check(result == .failure(.unsigned), "서명 없는 릴리스는 받지 않음") }
   var elsewhere = u.available!
   elsewhere.dmgURL = URL(string: "https://example.com/Clocky.dmg")
   u.download(elsewhere, to: downloads) { result in check(result == .failure(.badAddress), "GitHub 밖에서는 받지 않음") }

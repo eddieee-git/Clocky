@@ -10,6 +10,8 @@ struct ReleaseInfo: Codable, Equatable {
     var dmgURL: URL?
     /// GitHub가 올린 파일마다 적어 두는 SHA-256. 받은 파일과 비교한다.
     var dmgSHA256: String?
+    /// dmg 옆에 올린 서명 파일(<dmg 이름>.sig). 0.2.2부터 있다.
+    var signatureURL: URL?
 
     /// GitHub API의 "최신 릴리스" 응답을 읽는다. 초안·시험판이거나 버전을 읽을 수 없으면 nil.
     static func parse(_ data: Data) -> ReleaseInfo? {
@@ -33,8 +35,10 @@ struct ReleaseInfo: Codable, Equatable {
         let dmg = release.assets?.first { $0.name.lowercased().hasSuffix(".dmg") }
         var sha: String?
         if let digest = dmg?.digest, digest.hasPrefix("sha256:") { sha = String(digest.dropFirst("sha256:".count)).lowercased() }
+        let signature = dmg.flatMap { dmg in release.assets?.first { $0.name == dmg.name + ".sig" } }
         return ReleaseInfo(version: version, pageURL: page, notes: release.body ?? "",
-                           dmgURL: dmg.flatMap { URL(string: $0.browser_download_url) }, dmgSHA256: sha)
+                           dmgURL: dmg.flatMap { URL(string: $0.browser_download_url) }, dmgSHA256: sha,
+                           signatureURL: signature.flatMap { URL(string: $0.browser_download_url) })
     }
 
     /// 알림 창에 넣을 만큼 줄인 변경 내용. 마크다운 기호는 뺀다.
@@ -191,7 +195,7 @@ final class UpdateChecker: ObservableObject {
     // MARK: 받기
 
     enum DownloadError: Error, Equatable {
-        case noFile, badAddress, tooLarge, checksum, server(Int), failed(String)
+        case noFile, badAddress, tooLarge, checksum, unsigned, badSignature, server(Int), failed(String)
 
         var message: String {
             switch self {
@@ -199,6 +203,8 @@ final class UpdateChecker: ObservableObject {
             case .badAddress: return L("다운로드 주소가 GitHub가 아닙니다.")
             case .tooLarge: return L("파일이 너무 큽니다.")
             case .checksum: return L("받은 파일이 GitHub에 올린 파일과 다릅니다. 지웠습니다.")
+            case .unsigned: return L("이 릴리스에는 서명이 없어 자동으로 받지 않습니다. 릴리스 페이지에서 확인해 주세요.")
+            case .badSignature: return L("받은 파일의 서명이 맞지 않습니다. 만든 사람이 올린 파일이 아닐 수 있어 지웠습니다.")
             case .server(let code): return L("서버 응답 %d", code)
             case .failed(let text): return text
             }
@@ -218,13 +224,57 @@ final class UpdateChecker: ObservableObject {
         return scheme == "https" && (host == "github.com" || host.hasSuffix(".githubusercontent.com"))
     }
 
-    /// dmg를 다운로드 폴더에 받아 SHA-256을 맞춰 본 뒤, 저장한 위치를 넘긴다.
+    // MARK: 서명
+
+    /// 릴리스 서명 공개키(Ed25519). 비밀키는 만든 사람의 Mac에만 있다(scripts/release-key.swift).
+    static let releasePublicKey = "wR4U4lBWoALE/pudjp6Ad3z0pwhW1qgr2d7BR44xgsY="
+
+    private static var publicKey: Curve25519.Signing.PublicKey? {
+        var text = releasePublicKey
+        #if DEBUG
+        if let override = UserDefaults.standard.string(forKey: "debugUpdatePublicKey") { text = override }
+        #endif
+        return Data(base64Encoded: text).flatMap { try? Curve25519.Signing.PublicKey(rawRepresentation: $0) }
+    }
+
+    /// 서명하는 내용. scripts/release-key.swift와 같아야 한다. 버전을 함께 넣어 옛 dmg를 새 버전으로 속이지 못하게 한다.
+    static func signedMessage(version: String, sha256: String) -> Data {
+        Data("clocky-release:\(version):\(sha256)".utf8)
+    }
+
+    /// 서명 파일(base64)이 이 버전의 이 파일에 맞는지.
+    static func verify(signature text: String, version: String, sha256: String,
+                       key: Curve25519.Signing.PublicKey? = publicKey) -> Bool {
+        guard let key,
+              let signature = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+        return key.isValidSignature(signature, for: signedMessage(version: version, sha256: sha256))
+    }
+
+    /// 서명 파일을 받은 뒤 dmg를 다운로드 폴더에 받아, SHA-256과 서명을 맞춰 본 뒤 저장한 위치를 넘긴다.
+    /// 서명이 없는 릴리스는 받지 않는다.
     func download(_ release: ReleaseInfo, to folder: URL? = nil, completion: @escaping (Result<URL, DownloadError>) -> Void) {
         guard let url = release.dmgURL else { return completion(.failure(.noFile)) }
-        guard Self.isAllowedDownload(url) else { return completion(.failure(.badAddress)) }
+        guard let signatureURL = release.signatureURL else { return completion(.failure(.unsigned)) }
+        guard Self.isAllowedDownload(url), Self.isAllowedDownload(signatureURL) else { return completion(.failure(.badAddress)) }
         guard !isDownloading else { return }
         isDownloading = true
         let folder = folder ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        session.dataTask(with: signatureURL) { [weak self] data, response, error in
+            guard let self else { return }
+            let ok = error == nil && (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+            guard ok, let data, data.count < 4096, let signature = String(data: data, encoding: .utf8) else {
+                DispatchQueue.main.async {
+                    self.isDownloading = false
+                    completion(.failure(error.map { .failed($0.localizedDescription) } ?? .unsigned))
+                }
+                return
+            }
+            self.downloadDMG(url, release: release, signature: signature, folder: folder, completion: completion)
+        }.resume()
+    }
+
+    private func downloadDMG(_ url: URL, release: ReleaseInfo, signature: String, folder: URL,
+                             completion: @escaping (Result<URL, DownloadError>) -> Void) {
         session.downloadTask(with: url) { [weak self] temp, response, error in
             var result: Result<URL, DownloadError>
             if let error {
@@ -234,7 +284,7 @@ final class UpdateChecker: ObservableObject {
             } else if let final = response?.url, !Self.isAllowedDownload(final) {
                 result = .failure(.badAddress)
             } else if let temp {
-                result = Self.store(temp, release: release, in: folder)
+                result = Self.store(temp, release: release, signature: signature, in: folder)
             } else {
                 result = .failure(.failed(L("다운로드하지 못했습니다.")))
             }
@@ -245,16 +295,15 @@ final class UpdateChecker: ObservableObject {
         }.resume()
     }
 
-    /// 받은 임시 파일을 확인하고 "Clocky 0.2.1.dmg"로 옮긴다. 같은 이름이 있으면 번호를 붙인다.
-    private static func store(_ temp: URL, release: ReleaseInfo, in folder: URL) -> Result<URL, DownloadError> {
+    /// 받은 임시 파일을 확인하고 "Clocky 0.2.2.dmg"로 옮긴다. 같은 이름이 있으면 번호를 붙인다.
+    private static func store(_ temp: URL, release: ReleaseInfo, signature: String, in folder: URL) -> Result<URL, DownloadError> {
         let manager = FileManager.default
         let size = (try? manager.attributesOfItem(atPath: temp.path)[.size] as? Int64) ?? 0
         guard size > 0, size <= maxBytes else { return .failure(.tooLarge) }
-        if let expected = release.dmgSHA256 {
-            guard let data = try? Data(contentsOf: temp, options: .mappedIfSafe) else { return .failure(.failed(L("다운로드하지 못했습니다."))) }
-            let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            guard actual == expected else { return .failure(.checksum) }
-        }
+        guard let data = try? Data(contentsOf: temp, options: .mappedIfSafe) else { return .failure(.failed(L("다운로드하지 못했습니다."))) }
+        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        if let expected = release.dmgSHA256, actual != expected { return .failure(.checksum) }
+        guard verify(signature: signature, version: release.version, sha256: actual) else { return .failure(.badSignature) }
         var target = folder.appendingPathComponent("Clocky \(release.version).dmg")
         var number = 2
         while manager.fileExists(atPath: target.path) {
@@ -279,12 +328,14 @@ final class UpdateChecker: ObservableObject {
         alert.messageText = L("새 버전 Clocky %@", release.version)
         let notes = release.shortNotes
         alert.informativeText = L("지금 쓰는 버전은 %@입니다.", AppVersion.current) + (notes.isEmpty ? "" : "\n\n" + notes)
-        alert.addButton(withTitle: release.dmgURL == nil ? L("릴리스 페이지 열기") : L("다운로드"))
+        // 서명이 없으면 자동으로 받지 않고 릴리스 페이지로 보낸다.
+        let canDownload = release.dmgURL != nil && release.signatureURL != nil
+        alert.addButton(withTitle: canDownload ? L("다운로드") : L("릴리스 페이지 열기"))
         alert.addButton(withTitle: L("나중에"))
-        if release.dmgURL != nil { alert.addButton(withTitle: L("릴리스 페이지 열기")) }
+        if canDownload { alert.addButton(withTitle: L("릴리스 페이지 열기")) }
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            if release.dmgURL == nil { NSWorkspace.shared.open(release.pageURL) } else { downloadAndOpen(release) }
+            if canDownload { downloadAndOpen(release) } else { NSWorkspace.shared.open(release.pageURL) }
         case .alertThirdButtonReturn:
             NSWorkspace.shared.open(release.pageURL)
         default:

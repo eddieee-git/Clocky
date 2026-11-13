@@ -10,7 +10,7 @@
 ## 설치하기
 
 1. [Releases](https://github.com/eddieee-git/mac-app-clocky/releases)에서 `Clocky-<버전>.dmg`(0.2.1까지는 `Clocky.dmg`)를 내려받습니다.
-2. dmg를 열고 Clocky를 Applications 폴더로 끌어다 놓습니다.
+2. dmg를 열고 Clocky를 Applications 폴더로 끌어다 놓습니다. dmg 창에서 바로 열면 dmg를 꺼낼 때 Clocky도 꺼지므로, 꼭 Applications 폴더에서 엽니다.
 3. dmg를 꺼냅니다.
 4. Applications 폴더에서 Clocky를 실행합니다.
 
@@ -59,7 +59,7 @@ xattr -dr com.apple.quarantine /Applications/Clocky.app
 
 Clocky는 하루에 한 번 GitHub에 새 버전이 있는지 확인합니다. 새 버전이 있으면 메뉴바 메뉴에 **새 버전 Clocky … 받기…**가 나오고, **설정 → 일반 → 업데이트**에도 보입니다. 바로 확인하려면 메뉴의 **업데이트 확인…**을 누릅니다. 자동 확인은 설정에서 끌 수 있습니다.
 
-1. **새 버전 받기…** → **다운로드**를 누릅니다. 다운로드 폴더에 `Clocky 0.x.x.dmg`가 받아지고 열립니다. Clocky는 받은 파일이 GitHub에 올린 파일과 같은지(SHA-256) 확인합니다.
+1. **새 버전 받기…** → **다운로드**를 누릅니다. 다운로드 폴더에 `Clocky 0.x.x.dmg`가 받아지고 열립니다. Clocky는 받은 파일이 GitHub에 올린 파일과 같은지(SHA-256), 만든 사람의 서명이 맞는지 확인합니다. 서명이 없거나 맞지 않으면 받지 않습니다.
 2. 안내 창에서 **Clocky 종료**를 누릅니다.
 3. 열린 창에서 Clocky를 Applications 폴더로 끌어다 놓아 기존 앱을 대체하고, Clocky를 다시 엽니다.
 4. 보안 경고가 다시 나오면 위의 방법으로 허용합니다. Mac 캘린더 연동을 쓰고 있다면 캘린더 접근도 다시 물을 수 있습니다.

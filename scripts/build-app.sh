@@ -22,12 +22,21 @@ codesign --force --sign - --options runtime --entitlements Resources/Clocky.enti
 
 # 내려받은 쪽에서 응용 프로그램 폴더로 끌어다 놓을 수 있게 바로가기를 함께 넣는다.
 staging=build/dmg
-rm -rf "$staging" build/Clocky*.dmg
+rm -rf "$staging" build/Clocky*.dmg(N)
 mkdir -p "$staging"
 cp -R "$app" "$staging/"
 ln -s /Applications "$staging/Applications"
 hdiutil create -quiet -volname Clocky -srcfolder "$staging" -format UDZO "$dmg"
 rm -rf "$staging"
 
+# 릴리스 서명 키가 이 Mac에 있으면 dmg를 서명해 <dmg>.sig를 만든다. 앱은 서명이 맞는 새 버전만 받는다.
+rm -f build/Clocky*.dmg.sig(N)
+if [[ -f ~/.clocky-release/signing-key ]]; then
+    swift scripts/release-key.swift sign "$dmg" "$version" > /dev/null
+else
+    echo "서명 키(~/.clocky-release/signing-key)가 없어 dmg를 서명하지 않았습니다. 릴리스에는 서명이 필요합니다." >&2
+fi
+
 echo "$app"
 echo "$dmg"
+if [[ -f "$dmg.sig" ]]; then echo "$dmg.sig"; fi

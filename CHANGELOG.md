@@ -4,6 +4,12 @@
 
 ## 한국어
 
+### 다음 버전
+
+- 업데이트 서명: 새 버전은 만든 사람의 서명(Ed25519)이 맞을 때만 받는다. 버전도 함께 서명해 옛 파일을 새 버전으로 속이지 못한다. 서명이 없는 릴리스는 릴리스 페이지로 안내한다.
+- dmg 안에서 바로 실행하면 Applications 폴더로 옮기라고 알린다.
+- 업데이트 확인과 개인정보 안내 문구를 정확하게 고쳤다(GitHub가 보는 것, iCal 주소가 저장되는 곳).
+
 ### 0.2.1 — 업데이트 확인
 
 - 업데이트 확인: 하루에 한 번 GitHub에 새 버전이 있는지 묻고, 있으면 메뉴바 메뉴와 설정 → 일반에 알린다. 누르면 dmg를 다운로드 폴더에 받아 SHA-256을 확인하고 연다. 설정에서 끌 수 있다.
@@ -36,6 +42,12 @@
 - macOS 26에서 개발하고 시험했다. macOS 13·14·15에서는 아직 실행해 보지 않았다.
 
 ## English
+
+### Next version
+
+- Signed updates: Clocky downloads a new version only when its developer's signature (Ed25519) matches. The version is signed too, so an old file can't pass as a new version. For an unsigned release, Clocky points you to the release page.
+- If you open Clocky straight from the dmg, it asks you to move it to the Applications folder.
+- Clearer wording about update checks and privacy (what GitHub sees, where iCal addresses are stored).
 
 ### 0.2.1 — Update checks
 

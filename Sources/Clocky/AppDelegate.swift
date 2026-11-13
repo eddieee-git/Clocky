@@ -55,6 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.buildMainMenu()
         }
 
+        // dmg 안에서 바로 열었으면 Applications 폴더로 옮기라고 알린다.
+        if Bundle.main.bundleURL.pathExtension == "app", InstallLocation.needsMove(Bundle.main.bundlePath) {
+            DispatchQueue.main.async { InstallLocation.warn() }
+        }
+
         // 처음 실행하면 무엇이 생겼는지 보이도록 창을 띄운다.
         if !UserDefaults.standard.bool(forKey: Self.launchedKey) {
             UserDefaults.standard.set(true, forKey: Self.launchedKey)
@@ -266,5 +271,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         edit.addItem(withTitle: L("전체 선택"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         NSApp.mainMenu = main
+    }
+}
+
+/// 다운로드한 dmg 안이나 macOS가 옮겨 둔 임시 위치에서 실행하는지 본다.
+/// 그러면 dmg를 꺼낼 때 앱도 사라지고, 로그인 시 자동 실행도 되지 않는다.
+enum InstallLocation {
+    static func needsMove(_ path: String) -> Bool {
+        path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/")
+    }
+
+    static func warn() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L("Clocky를 Applications 폴더로 옮겨 주세요")
+        alert.informativeText = L("지금 디스크 이미지(dmg)에서 바로 실행하고 있습니다. 이대로는 dmg를 꺼내면 Clocky도 꺼지고, 로그인 시 자동 실행도 되지 않습니다.\n\nClocky를 종료한 뒤 dmg 창에서 Clocky를 Applications 폴더로 끌어 놓고, Applications 폴더에서 다시 여세요.")
+        alert.addButton(withTitle: L("종료하고 Applications 폴더 열기"))
+        alert.addButton(withTitle: L("이대로 계속"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications"))
+            NSApp.terminate(nil)
+        }
     }
 }

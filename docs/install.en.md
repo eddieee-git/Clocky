@@ -10,7 +10,7 @@
 ## Install
 
 1. Download `Clocky-<version>.dmg` (`Clocky.dmg` up to 0.2.1) from [Releases](https://github.com/eddieee-git/mac-app-clocky/releases).
-2. Open the dmg and drag Clocky to the Applications folder.
+2. Open the dmg and drag Clocky to the Applications folder. Open Clocky from the Applications folder, not from the dmg window, or it quits when you eject the dmg.
 3. Eject the dmg.
 4. Open Clocky from the Applications folder.
 
@@ -59,7 +59,7 @@ When you turn on **Settings → Calendar → Alert for Mac Calendar events**, ma
 
 Clocky checks GitHub for a new version once a day. When there is one, the menu bar menu shows **Get New Version, Clocky …**, and so does **Settings → General → Updates**. To check right away, choose **Check for Updates…** from the menu. You can turn off automatic checks in Settings.
 
-1. Choose **Get New Version…** → **Download**. Clocky saves `Clocky 0.x.x.dmg` to your Downloads folder and opens it. Clocky checks that the file matches the one on GitHub (SHA-256).
+1. Choose **Get New Version…** → **Download**. Clocky saves `Clocky 0.x.x.dmg` to your Downloads folder and opens it. Clocky checks that the file matches the one on GitHub (SHA-256) and that the developer's signature is valid. It won't download a file that's unsigned or doesn't match.
 2. Click **Quit Clocky** in the window that explains the next steps.
 3. In the window that opened, drag Clocky to the Applications folder to replace the old app, then open Clocky again.
 4. If the security warning appears again, allow it as above. If you use the Mac Calendar option, macOS may ask for calendar access again.
