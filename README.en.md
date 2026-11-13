@@ -172,7 +172,7 @@ Run the tests with Swift Testing from the Command Line Tools:
 scripts/test.sh
 ```
 
-GUI tests that open real windows run with `scripts/gui-test.sh`. Each scenario in `Tests/GUI` is built and run on its own. The `calendar` scenario starts a small web server on your Mac and checks everything from downloading to ringing, and `readme-shots` takes the screenshots for these docs in `build/shots`. Some scenarios fail while the screen is locked, because clicks can't reach the windows.
+GUI tests that open real windows run with `scripts/gui-test.sh`. Each scenario in `Tests/GUI` is built and run on its own. The `calendar` scenario starts a small web server on your Mac and checks everything from downloading to ringing, the `update` scenario checks finding and downloading a new version from a server that mimics GitHub Releases, and `readme-shots` takes the screenshots for these docs in `build/shots`. Some scenarios fail while the screen is locked, because clicks can't reach the windows.
 
 ```bash
 scripts/gui-test.sh

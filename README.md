@@ -172,7 +172,7 @@ scripts/build-app.sh
 scripts/test.sh
 ```
 
-창을 실제로 띄워 보는 시험은 `scripts/gui-test.sh`로 돌립니다. `Tests/GUI`의 시나리오마다 따로 빌드해 실행합니다. `calendar` 시나리오는 이 Mac 안에 작은 웹 서버를 띄워 받아 오기부터 울리기까지 보고, `readme-shots` 시나리오는 문서 이미지를 `build/shots`에 찍습니다. 화면이 잠겨 있으면 클릭이 창에 닿지 않아 일부 시나리오가 실패합니다.
+창을 실제로 띄워 보는 시험은 `scripts/gui-test.sh`로 돌립니다. `Tests/GUI`의 시나리오마다 따로 빌드해 실행합니다. `calendar` 시나리오는 이 Mac 안에 작은 웹 서버를 띄워 받아 오기부터 울리기까지 보고, `update` 시나리오는 GitHub 릴리스처럼 꾸민 서버로 새 버전 찾기와 받기를 보고, `readme-shots` 시나리오는 문서 이미지를 `build/shots`에 찍습니다. 화면이 잠겨 있으면 클릭이 창에 닿지 않아 일부 시나리오가 실패합니다.
 
 ```bash
 scripts/gui-test.sh
